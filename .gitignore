@@ -76,5 +76,7 @@ next-env.d.ts
 
 # Hosted runtime state and Railway CLI linkage are never source.
 /data
-/.railway
+/.railway/*
+!/.railway/railway.ts
+!/.railway/README.md
 /hosting/*.local.*
