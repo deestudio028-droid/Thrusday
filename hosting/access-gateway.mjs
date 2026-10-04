@@ -142,6 +142,9 @@ function loginPage(error = "") {
 
 const AUTH_PAGE_HEADERS = {
   "content-type": "text/html; charset=utf-8",
+  // Native same-origin form POSTs need an Origin header for the gateway check.
+  // no-referrer makes browsers serialize that Origin as null.
+  "referrer-policy": "same-origin",
   "content-security-policy":
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   "x-frame-options": "DENY",

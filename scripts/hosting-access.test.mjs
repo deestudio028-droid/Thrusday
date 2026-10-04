@@ -139,6 +139,11 @@ test("every private route is denied without a session; public health checks the 
 
 test("login requires an exact origin, sets a secure session, and logout revokes it", async (t) => {
   const f = await fixture(t);
+  for (const path of ["/", "/__auth/login"]) {
+    const page = await f.request(path, { headers: { accept: "text/html" } });
+    assert.equal(page.headers["referrer-policy"], "same-origin");
+    assert.match(page.body, /<form action="\/__auth\/login" method="post">/);
+  }
   const form = {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -154,16 +159,13 @@ test("login requires an exact origin, sets a secure session, and logout revokes 
     ).status,
     403,
   );
-  assert.equal(
-    (
-      await f.request("/__auth/login", {
-        ...form,
-        headers: { ...form.headers, origin },
-        body: "password=incorrect",
-      })
-    ).status,
-    401,
-  );
+  const wrongPassword = await f.request("/__auth/login", {
+    ...form,
+    headers: { ...form.headers, origin },
+    body: "password=incorrect",
+  });
+  assert.equal(wrongPassword.status, 401);
+  assert.equal(wrongPassword.headers["referrer-policy"], "same-origin");
   const { cookie, result } = await f.login();
   assert.match(
     result.headers["set-cookie"][0],
