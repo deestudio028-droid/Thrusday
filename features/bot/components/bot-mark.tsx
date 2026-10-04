@@ -1,0 +1,1361 @@
+"use client";
+
+import { memo, useEffect, useId, useMemo, useRef } from "react";
+import { useSettingsStore } from "@/features/settings/settings.store";
+import { watchOnScreen } from "@/hooks/use-on-screen";
+import { useIsDark } from "@/hooks/use-theme";
+import { createVoiceFollower, SPECTRUM_BANDS } from "@/lib/live/live.tap";
+import { cn } from "@/lib/utils";
+import type { Bot, BotIcon } from "../bot.schema";
+import {
+  MARK_PAINTS,
+  type MarkPaint,
+  type MarkPaintLook,
+  type MarkPaintSpec,
+  type MarkShape,
+  markInk,
+} from "../mark.const";
+import {
+  BOX,
+  CENTER,
+  clamp,
+  eyePath,
+  f,
+  hashSeed,
+  MARK_DEFAULTS,
+  type MarkOptions,
+  RES,
+  radiiFor,
+  radiiToPath,
+  TAU,
+} from "../mark.geometry";
+
+// Procedural bot avatar: a generated silhouette with two eyes, animated per frame from refs.
+
+const PAD = 18; // headroom so squash/stretch and the notify ring can bleed out
+/** The waiting dot pops in rather than blinking on, the ring it cuts growing with it. */
+const NOTIFY_POP =
+  "origin-center animate-in duration-300 zoom-in-0 [transform-box:fill-box]";
+const VIEW_BOX = `${-PAD} ${-PAD} ${BOX + PAD * 2} ${BOX + PAD * 2}`;
+
+/** What the mark is doing. There is no mouth; while `speaking` the silhouette carries the audio. */
+export type MarkState =
+  | "idle"
+  | "connecting"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  /** Handing work to a background bot. */
+  | "delegating";
+
+/**
+ * Where a mark sits between the smallest the app draws (14px, 0) and the bot
+ * page's 112px (1). The SVG scales evenly, but a small face has fewer pixels for
+ * each band, so paints and a crossed-out X are drawn denser as this falls.
+ */
+const growOf = (size: number) => clamp((size - 14) / 98, 0, 1);
+
+/** One run of the sliding rainbow: shorter on small marks, so more of its colours fit. */
+const spanOf = (grow: number) => 345 * (0.7 + 0.3 * grow);
+
+/** Where each look's gradient runs, in the 240-unit box. */
+function paintAxis(
+  look: MarkPaintLook,
+  grow: number,
+): Pick<
+  React.SVGProps<SVGLinearGradientElement>,
+  "gradientUnits" | "x1" | "y1" | "x2" | "y2" | "spreadMethod"
+> {
+  if (look === "flow") {
+    return {
+      gradientUnits: "userSpaceOnUse",
+      x1: 0,
+      y1: 0,
+      x2: spanOf(grow),
+      y2: 0,
+      spreadMethod: "repeat",
+    };
+  }
+  // In box units like the rest, so the wider blurred layer wears the same ramp as the head.
+  return {
+    gradientUnits: "userSpaceOnUse",
+    x1: 0,
+    y1: 0,
+    x2: look === "duo" ? BOX : 0,
+    y2: BOX,
+  };
+}
+
+/** A paint's stops. Aurora's gradient is only its night. */
+function paintStops({
+  look,
+  colors,
+}: MarkPaintSpec): { offset: number; color: string }[] {
+  const used = look === "aurora" ? colors.slice(0, 2) : colors;
+  return used.map((color, i) => ({ offset: i / (used.length - 1), color }));
+}
+
+/** Aurora's curtains: where each hangs, how far it sways and how long one sway takes (s). */
+const CURTAINS = [
+  { cx: 42, sway: 40, period: 5 },
+  { cx: 134, sway: -35, period: 6.5 },
+  { cx: 209, sway: 29, period: 4.5 },
+];
+const CURTAIN_Y = 91;
+/** Curtains grow broader and softer on small marks, so they read as a glow, not a stripe. */
+const curtainRxOf = (grow: number) => 60 - 29 * grow;
+const curtainBlurOf = (grow: number) => 34 - 12 * grow;
+
+/** Below this relative luminance a body sinks into a dark page. */
+const DARK_BODY = 0.06;
+
+/** Relative luminance of a #rrggbb colour; null for anything else (currentColor follows the theme). */
+function luminance(color: string): number | null {
+  const hex = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!hex) return null;
+  const channel = (at: number) => {
+    const c = Number.parseInt(hex[1].slice(at, at + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+/* Idle beats: small unrelated motions picked at random, weighted by state. Each returns
+ * per-frame channel offsets for progress p in 0..1 and a direction. `eyeLen`/`eyeWid`
+ * scale along the eye's own axis, so they still mean shorter/wider when the eye is tilted. */
+
+type Move = {
+  eyeLen: number;
+  eyeWid: number;
+  eyeX: number;
+  eyeY: number;
+  bodyX: number;
+  bodyY: number;
+  rot: number;
+  scale: number;
+  /** Request an extra blink this many ms from now; 0 for none. */
+  blinkIn: number;
+};
+
+const STILL: Move = {
+  eyeLen: 1,
+  eyeWid: 1,
+  eyeX: 0,
+  eyeY: 0,
+  bodyX: 0,
+  bodyY: 0,
+  rot: 0,
+  scale: 1,
+  blinkIn: 0,
+};
+
+const smooth = (x: number) => x * x * (3 - 2 * x);
+
+/** Up and down in one arc. */
+const hump = (p: number) => Math.sin(Math.PI * p);
+
+/** Rise, hold, fall. Saccades rise much faster than they return, so the ratios are separate. */
+function holdEnv(p: number, rise: number, fall: number) {
+  if (p <= 0 || p >= 1) return 0;
+  if (p < rise) return smooth(p / rise);
+  if (p > 1 - fall) return smooth((1 - p) / fall);
+  return 1;
+}
+
+type Beat = {
+  weight: number;
+  dur: [number, number];
+  play: (p: number, dx: number, dy: number) => Partial<Move>;
+};
+
+const BEATS = {
+  // The blink lands on the saccade itself, as with real eyes.
+  glance: {
+    weight: 26,
+    dur: [900, 1400],
+    play: (p, dx, dy) => {
+      const e = holdEnv(p, 0.12, 0.34);
+      return {
+        eyeX: dx * 22 * e,
+        eyeY: dy * 22 * e,
+        rot: dx * 0.9 * e,
+        blinkIn: p < 0.02 && Math.random() < 0.4 ? 40 : 0,
+      };
+    },
+  },
+  lookAway: {
+    weight: 12,
+    dur: [1800, 2600],
+    play: (p, dx, dy) => {
+      const e = holdEnv(p, 0.1, 0.46);
+      return {
+        eyeX: dx * 30 * e,
+        eyeY: (dy * 0.5 + 0.35) * 22 * e,
+        rot: dx * 1.6 * e,
+      };
+    },
+  },
+  widen: {
+    weight: 8,
+    dur: [700, 950],
+    play: (p, dx) => {
+      const e = holdEnv(p, 0.22, 0.5);
+      return { eyeLen: 1 + 0.16 * e, eyeWid: 1 + 0.2 * e, rot: -dx * 0.5 * e };
+    },
+  },
+  squint: {
+    weight: 8,
+    dur: [800, 1050],
+    play: (p) => {
+      const e = holdEnv(p, 0.25, 0.45);
+      return { eyeLen: 1 - 0.3 * e, eyeWid: 1 - 0.12 * e };
+    },
+  },
+  double: {
+    weight: 7,
+    dur: [420, 420],
+    play: (p) => ({ blinkIn: p < 0.02 ? 1 : 0 }),
+  },
+  nod: {
+    weight: 11,
+    dur: [1150, 1400],
+    play: (p) => ({
+      bodyY: 10 * Math.sin(TAU * 2 * p) * hump(p),
+      rot: 2.2 * Math.sin(TAU * 2 * p + 0.5) * hump(p),
+      eyeY: 3.2 * Math.sin(TAU * 2 * p - 0.7) * hump(p),
+    }),
+  },
+  sink: {
+    weight: 7,
+    dur: [1800, 2300],
+    play: (p) => {
+      const e = hump(p) ** 0.7;
+      return {
+        eyeLen: 1 - 0.26 * e,
+        eyeY: 4 * e,
+        bodyY: 8 * e,
+        scale: 1 - 0.03 * e,
+        rot: 1.8 * e,
+      };
+    },
+  },
+  wave: {
+    weight: 7,
+    dur: [1300, 1700],
+    play: (p, dx) => {
+      const e = holdEnv(p, 0.24, 0.34);
+      return {
+        bodyX: dx * Math.sin(TAU * 1.5 * p) * 9 * e,
+        rot: dx * Math.sin(TAU * 1.5 * p + 0.5) * 4.5 * e,
+        eyeX: dx * Math.sin(TAU * 1.5 * p) * 5 * e,
+        eyeLen: 1 - 0.2 * e,
+      };
+    },
+  },
+  reach: {
+    weight: 7,
+    dur: [1800, 2300],
+    play: (p) => {
+      const e = holdEnv(p, 0.28, 0.34);
+      return {
+        scale: 1 + 0.045 * e,
+        bodyY: -4 * e,
+        eyeLen: 1 - 0.28 * e,
+        eyeY: 3 * e,
+        rot: 1.8 * e,
+      };
+    },
+  },
+  tilt: {
+    weight: 11,
+    dur: [1500, 1900],
+    play: (p, dx) => {
+      const e = holdEnv(p, 0.22, 0.4);
+      return { rot: dx * 9 * e, bodyX: dx * -3 * e, eyeY: -1.5 * e };
+    },
+  },
+  sweep: {
+    weight: 9,
+    dur: [1600, 2200],
+    play: (p, dx, dy) => {
+      const e = holdEnv(p, 0.12, 0.18);
+      const side = Math.cos(Math.PI * clamp((p - 0.15) / 0.7, 0, 1));
+      return {
+        eyeX: dx * 24 * e * side,
+        eyeY: dy * 24 * e * side,
+        rot: dx * 1.2 * e * side,
+      };
+    },
+  },
+  roll: {
+    weight: 5,
+    dur: [900, 1200],
+    play: (p, dx) => {
+      const e = hump(p) ** 0.5;
+      const a = TAU * p * (dx >= 0 ? 1 : -1);
+      return {
+        eyeX: Math.cos(a) * 20 * e,
+        eyeY: Math.sin(a) * 14 * e,
+        rot: Math.sin(a) * 1.5 * e,
+        blinkIn: p > 0.9 && p < 0.93 ? 1 : 0,
+      };
+    },
+  },
+  shake: {
+    weight: 8,
+    dur: [650, 900],
+    play: (p, dx) => {
+      const e = hump(p);
+      const s = Math.sin(TAU * 2 * p);
+      return {
+        rot: dx * s * 5 * e,
+        bodyX: dx * s * 4 * e,
+        eyeX: -dx * s * 4 * e,
+      };
+    },
+  },
+  bounce: {
+    weight: 6,
+    dur: [850, 1100],
+    play: (p) => {
+      const decay = 1 - 0.45 * p;
+      const h = Math.abs(Math.sin(TAU * p)) * decay;
+      const land = Math.max(0, -Math.cos(TAU * p)) * decay;
+      return { bodyY: -14 * h, eyeY: 2.5 * h, scale: 1 - 0.04 * land };
+    },
+  },
+  slowBlink: {
+    weight: 6,
+    dur: [900, 1200],
+    play: (p) => ({ eyeWid: 1 - 0.88 * hump(p) ** 0.6, eyeY: 1.5 * hump(p) }),
+  },
+  perk: {
+    weight: 5,
+    dur: [700, 950],
+    play: (p, dx) => {
+      const e = holdEnv(p, 0.09, 0.62);
+      return {
+        bodyY: -7 * e,
+        scale: 1 + 0.035 * e,
+        eyeLen: 1 + 0.14 * e,
+        eyeWid: 1 + 0.1 * e,
+        rot: dx * 0.8 * e,
+      };
+    },
+  },
+} satisfies Record<string, Beat>;
+
+type BeatKey = keyof typeof BEATS;
+
+const BEAT_KEYS = Object.keys(BEATS) as BeatKey[];
+
+/** Per-state beat weight multipliers. Unlisted beats are 1; 0 disables the beat in that state. */
+const STATE_BEATS: Record<MarkState, Partial<Record<BeatKey, number>>> = {
+  idle: {},
+  connecting: { nod: 0, wave: 0, bounce: 0, sweep: 1.6, roll: 1.4 },
+  listening: {
+    glance: 0.3,
+    lookAway: 0.15,
+    sweep: 0.2,
+    roll: 0,
+    wave: 0,
+    shake: 0,
+    bounce: 0,
+    sink: 0.3,
+    widen: 2.2,
+    perk: 1.8,
+    nod: 1.6,
+    slowBlink: 1.4,
+  },
+  thinking: {
+    lookAway: 2.2,
+    squint: 2,
+    tilt: 1.8,
+    roll: 2,
+    sweep: 1.4,
+    sink: 1.6,
+    glance: 0.8,
+    slowBlink: 1.2,
+    nod: 0.3,
+    wave: 0,
+    bounce: 0.2,
+    perk: 0.5,
+  },
+  delegating: {
+    wave: 2.6,
+    nod: 1.8,
+    perk: 1.6,
+    glance: 1.4,
+    tilt: 1.2,
+    lookAway: 0.4,
+    squint: 0.4,
+    sink: 0,
+    roll: 0,
+  },
+  speaking: {
+    nod: 2,
+    glance: 1.2,
+    widen: 1.2,
+    sink: 0,
+    roll: 0.3,
+    wave: 0.4,
+    slowBlink: 0.4,
+    bounce: 0.6,
+  },
+};
+
+function pickBeat(state: MarkState): BeatKey {
+  const bias = STATE_BEATS[state];
+  const weightOf = (key: BeatKey) => BEATS[key].weight * (bias[key] ?? 1);
+  let total = 0;
+  for (const key of BEAT_KEYS) total += weightOf(key);
+  let r = Math.random() * total;
+  for (const key of BEAT_KEYS) {
+    r -= weightOf(key);
+    if (r <= 0) return key;
+  }
+  return BEAT_KEYS[0];
+}
+
+type StateShape = {
+  /** Eye size multiplier. */
+  eyes: number;
+  /** Whole-mark multiplier. */
+  body: number;
+  /** Slow self-driven deformation, independent of audio. */
+  churn: number;
+  churnSpeed: number;
+  /** Multiplier on the gap between idle beats. */
+  dwell: number;
+  breathe: number;
+  /** Multiplier on idle eye drift and on the blink interval. */
+  float: number;
+  blink: number;
+  /** Constant tilt, degrees. */
+  lean: number;
+  /** Width/height ratio; above 1 flattens. */
+  aspect: number;
+  /** Constant gaze offset, box units, on top of pointer tracking and drift. */
+  gazeX: number;
+  gazeY: number;
+};
+
+/** Resting-pose targets per state. */
+const STATE_SHAPE: Record<MarkState, StateShape> = {
+  idle: {
+    eyes: 1,
+    body: 1,
+    churn: 0,
+    churnSpeed: 0,
+    dwell: 1,
+    breathe: 1,
+    float: 1,
+    blink: 1,
+    lean: 0,
+    aspect: 1,
+    gazeX: 0,
+    gazeY: 0,
+  },
+  connecting: {
+    eyes: 0.75,
+    body: 0.91,
+    churn: 2.5,
+    churnSpeed: 3,
+    dwell: 0.8,
+    breathe: 2.2,
+    float: 0.6,
+    blink: 0.6,
+    lean: 0,
+    aspect: 1.03,
+    gazeX: 0,
+    gazeY: 4,
+  },
+  listening: {
+    eyes: 1.3,
+    body: 1.04,
+    churn: 0,
+    churnSpeed: 0,
+    dwell: 2.6,
+    breathe: 0.45,
+    float: 0.35,
+    blink: 1.8,
+    lean: 0,
+    aspect: 0.97,
+    gazeX: 0,
+    gazeY: -3,
+  },
+  thinking: {
+    eyes: 0.66,
+    body: 0.96,
+    churn: 5,
+    churnSpeed: 0.6,
+    dwell: 0.5,
+    breathe: 1.3,
+    float: 1.4,
+    blink: 0.8,
+    lean: 7,
+    aspect: 1.04,
+    gazeX: -9,
+    gazeY: -8,
+  },
+  delegating: {
+    eyes: 0.9,
+    body: 0.98,
+    churn: 0,
+    churnSpeed: 0,
+    dwell: 2.2,
+    breathe: 0.6,
+    float: 0.5,
+    blink: 1.3,
+    lean: -6,
+    aspect: 1,
+    gazeX: 15,
+    gazeY: 2,
+  },
+  // Small fast churn, as in `connecting`: driving the outline hard from the bands
+  // stops reading as a head.
+  speaking: {
+    eyes: 0.95,
+    body: 1,
+    churn: 2.5,
+    churnSpeed: 3,
+    dwell: 4,
+    breathe: 0.4,
+    float: 0.5,
+    blink: 1.2,
+    lean: 0,
+    aspect: 1,
+    gazeX: 0,
+    gazeY: 0,
+  },
+};
+
+/** What the follower reads while the mark is not speaking. */
+const SILENT: number[] = new Array<number>(SPECTRUM_BANDS).fill(0);
+
+/**
+ * Milliseconds to the next blink, irregular the way a person's are: mostly a
+ * couple of seconds apart, now and then a long look, and sometimes a second
+ * blink right on the heels of the first.
+ */
+function blinkGap(): number {
+  const roll = Math.random();
+  if (roll < 0.15) return 180 + Math.random() * 320;
+  if (roll < 0.8) return 1200 + Math.random() * 2300;
+  return 3500 + Math.random() * 2800;
+}
+
+const pointer = { x: 0, y: 0, live: false };
+
+/** One passive listener for the whole app, bound when the first mark mounts. */
+let pointerBound = false;
+function bindPointer() {
+  if (pointerBound || typeof window === "undefined") return;
+  pointerBound = true;
+  window.addEventListener(
+    "pointermove",
+    (e) => {
+      pointer.x = e.clientX;
+      pointer.y = e.clientY;
+      pointer.live = true;
+    },
+    { passive: true },
+  );
+}
+
+/**
+ * How long a face at rest looks one way before its eyes move to another (`resting`). Between a
+ * glance and a blink the mark draws nothing, so these and the blink's own gaps are what it costs.
+ */
+const REST_GLANCE = { minMs: 5_000, maxMs: 12_000 };
+
+/**
+ * The boxes of the marks whose eyes follow the pointer, all read on the first read of a frame.
+ * Every mark writes its shape each frame, so a mark reading its own box after another mark's
+ * write lays the page out again: one layout per mark per frame, where one pass lays it out once.
+ */
+const boxes = new Map<SVGSVGElement, DOMRect>();
+let boxesAt = -1;
+
+function boxOf(svg: SVGSVGElement, frame: number) {
+  if (frame !== boxesAt) {
+    boxesAt = frame;
+    for (const each of boxes.keys())
+      boxes.set(each, each.getBoundingClientRect());
+  }
+  let box = boxes.get(svg);
+  if (!box) {
+    box = svg.getBoundingClientRect();
+    boxes.set(svg, box);
+  }
+  return box;
+}
+
+type BotMarkProps = {
+  /** Pixel size of the square the mark is drawn in. */
+  size?: number;
+  /** Fixes the silhouette and the idle-animation phase. Strings are hashed, so an id works. */
+  seed?: number | string;
+  color?: string;
+  shape?: MarkShape;
+  /** Stroke instead of fill; same as `options.fill: false`. */
+  outline?: boolean;
+  /** A paint (MARK_PAINTS) worn in place of `color`. */
+  paint?: MarkPaint;
+  /** A dot on the rim: something of this bot wants the user. */
+  notify?: boolean;
+  /** Eyes crossed out: a stopped thread, or a call that failed. */
+  crossed?: boolean;
+  /**
+   * At rest: the body holds still and the eyes stay open, and only a blink or a glance comes now
+   * and then, drawn as it happens with the loop asleep between them. For a face shown only to say
+   * the bot is there (the pill and the finished cards with nothing going on).
+   */
+  resting?: boolean;
+  /** Drawn once, eyes open, and never again: an icon that names bots rather than being one. */
+  still?: boolean;
+  state?: MarkState;
+  /**
+   * Where the eyes rest, in the 240-unit box, on top of everything else that moves them: a bot
+   * walking in the office looks where it goes. Plain numbers, so the mark stays memoised.
+   */
+  gazeX?: number;
+  gazeY?: number;
+  /** SPECTRUM_BANDS values in 0..1, low frequencies first, read once per frame. Where the energy sits sets the shape, how much sets the size. */
+  getSpectrum?: () => ArrayLike<number>;
+  /** Per-instance overrides; omitted keys fall back to MARK_DEFAULTS. Pass a stable object, a new literal each render re-derives the silhouette. */
+  options?: Partial<MarkOptions>;
+  className?: string;
+};
+
+/**
+ * A bot's stored `icon` as the props above: all of it, so the mark reads as that bot wherever it
+ * is drawn. The seed is the caller's to give, since it is the bot's name.
+ */
+export const iconProps = (icon?: BotIcon | null) => ({
+  color: icon?.color,
+  shape: icon?.shape,
+  outline: icon?.outline,
+  paint: icon?.paint,
+});
+
+/**
+ * `iconProps` of the bot called `name` in `bots`, for a row that carries only the name. A bot
+ * that is gone draws its seed alone.
+ */
+export const markOf = (name: string, bots?: Bot[]) =>
+  iconProps(bots?.find((bot) => bot.name === name)?.icon);
+
+/**
+ * memo: its props are plain values, and a screen that redraws per frame (the office's clock)
+ * would otherwise run every mark's render with it; its motion runs through refs, not renders.
+ */
+export const BotMark = memo(function BotMark({
+  size = 32,
+  seed,
+  color,
+  shape,
+  outline,
+  paint,
+  notify,
+  crossed,
+  resting = false,
+  still = false,
+  state = "idle",
+  gazeX = 0,
+  gazeY = 0,
+  getSpectrum,
+  options,
+  className,
+}: BotMarkProps) {
+  const clipId = useId();
+  const cfg = useMemo(
+    () =>
+      ({
+        ...MARK_DEFAULTS,
+        ...options,
+        ...(outline === undefined ? {} : { fill: !outline }),
+      }) as MarkOptions,
+    [options, outline],
+  );
+  const maskId = `${clipId}-mask`;
+  const paintId = `${clipId}-paint`;
+  const curtainId = `${clipId}-curtain`;
+  const lifeRef = useRef<SVGGElement>(null);
+  const eyesRef = useRef<SVGGElement>(null);
+  const headRef = useRef<SVGPathElement>(null);
+  const clipRef = useRef<SVGPathElement>(null);
+  const eyeLRef = useRef<SVGGElement>(null);
+  const eyeRRef = useRef<SVGGElement>(null);
+  const maskHeadRef = useRef<SVGPathElement>(null);
+  const paintRef = useRef<SVGLinearGradientElement>(null);
+  const curtainRefs = useRef<(SVGEllipseElement | null)[]>([]);
+  const inkEyesRef = useRef<SVGGElement>(null);
+  const inkEyeLRef = useRef<SVGGElement>(null);
+  const inkEyeRRef = useRef<SVGGElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const shapeSeed = seed === undefined ? cfg.seed : hashSeed(seed);
+  const theShape = shape ?? cfg.shape;
+  // The stored colour is the user's; the paper it lands on decides how it is drawn.
+  const theFg = markInk(color ?? cfg.color, useIsDark());
+  const notifying = notify ?? cfg.notify;
+  const spec = paint ? MARK_PAINTS[paint] : null;
+  const grow = growOf(size);
+  // A dark body draws its eyes: as holes they show the dark page it sinks into.
+  const edge = spec
+    ? "edge" in spec
+      ? spec.edge
+      : null
+    : (luminance(theFg) ?? 1) < DARK_BODY
+      ? "dark"
+      : null;
+
+  // While deforming, the head is redrawn per frame; memo only seeds the initial `d`.
+  const radii = useMemo(
+    () => radiiFor(cfg, theShape, shapeSeed),
+    [cfg, theShape, shapeSeed],
+  );
+  const headPath = useMemo(() => radiiToPath(radii), [radii]);
+
+  const eyeL = useMemo(
+    () =>
+      eyePath({
+        len: cfg.eyeLen,
+        width: cfg.eyeWidth,
+        bend: cfg.eyeBend,
+        taper: cfg.eyeTaper,
+        tilt: cfg.eyeTilt,
+        cx: CENTER - cfg.eyeGap / 2,
+        cy: cfg.eyeY,
+      }),
+    [cfg],
+  );
+  const eyeR = useMemo(
+    () =>
+      eyePath({
+        len: cfg.eyeLen,
+        width: cfg.eyeWidth,
+        bend: cfg.eyeBend,
+        taper: cfg.eyeTaper,
+        tilt: cfg.eyeTilt + cfg.eyeSkew,
+        cx: CENTER + cfg.eyeGap / 2,
+        cy: cfg.eyeY,
+      }),
+    [cfg],
+  );
+
+  // Animated per frame through refs, not React state, so many marks do not re-render
+  // the tree at 60 fps. `radii` and `shapeSeed` go through the ref rather than the
+  // effect deps: the loop mounts once, and restarting it on a seed change (the create
+  // form retypes the name) would snap the eyes and reset the blink and breath phase.
+  const look = spec?.look ?? null;
+  const eyesOut = Boolean(crossed);
+  const live = useRef({
+    cfg,
+    state,
+    getSpectrum,
+    radii,
+    shapeSeed,
+    look,
+    crossed: eyesOut,
+    resting,
+    still,
+    grow,
+    gazeX,
+    gazeY,
+  });
+  live.current = {
+    cfg,
+    state,
+    getSpectrum,
+    radii,
+    shapeSeed,
+    look,
+    crossed: eyesOut,
+    resting,
+    still,
+    grow,
+    gazeX,
+    gazeY,
+  };
+  /** Starts the loop again from outside it: a mark asleep has stopped asking for frames. */
+  const wake = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    bindPointer();
+    let raf = 0;
+    // Seeded once at mount; a later seed change must not reset the breathing phase.
+    const phase = (live.current.shapeSeed % 17) * 0.91;
+    let gx = 0;
+    let gy = 0;
+    let nextBlink = performance.now() + 600 + blinkGap();
+    let blinkStart = 0;
+    let blinkLength = 130;
+    let queuedBlink = 0;
+    const voice = createVoiceFollower();
+
+    // STATE_SHAPE values are targets, eased over about 0.6 s.
+    const shape = { ...STATE_SHAPE.idle };
+    const SHAPE_KEYS = Object.keys(shape) as (keyof StateShape)[];
+    // Two time scales: ~50 ms to catch a syllable, ~1 s to know speech is ongoing.
+    let fastLvl = 0;
+    let lvl = 0;
+    let bright = 0.5;
+    // Syllable-kicked spring; its own frequency caps how fast the mark can move.
+    let bob = 0;
+    let bobVel = 0;
+    let lastOnset = 0;
+    const band = new Array<number>(SPECTRUM_BANDS).fill(0);
+    // Each harmonic rotates at its own speed, alternating direction, so the deformation
+    // never settles into a standing wave.
+    const bandPhase = Array.from({ length: SPECTRUM_BANDS }, (_, k) => k * 1.7);
+    // Integrated, never `time * speed`: `churnSpeed` eases between states, and
+    // phase = elapsed * speed would sweep the whole elapsed time on every speed change.
+    let churnPhase = 0;
+    let last = performance.now();
+    let beat: {
+      key: BeatKey;
+      start: number;
+      dur: number;
+      dx: number;
+      dy: number;
+    } | null = null;
+    let nextBeat = performance.now() + 1500 + Math.random() * 3000;
+    /** The element this mark keeps a box for in `boxes`, while its eyes follow the pointer. */
+    let followed: SVGSVGElement | null = null;
+    const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    /** How far settled, 0 to 1: the body's breath and the eyes' drift go with it (`resting`). */
+    let settle = live.current.resting ? 1 : 0;
+    /** Where the eyes look at rest, and when they next look somewhere else. */
+    let restGx = 0;
+    let restGy = 0;
+    let nextGlance = performance.now() + REST_GLANCE.minMs;
+    /** The wait for the next blink or glance while the loop is asleep at rest. */
+    let nap: ReturnType<typeof setTimeout> | undefined;
+
+    // Out of the window it draws nothing and asks for no frames: a thread's turns each carry
+    // a mark, and one long thread kept dozens ticking out of sight (hooks/use-on-screen)
+    let onScreen = true;
+    // Nor under Settings, which covers the call screen whole (as her face is held there): the
+    // pill's marks went on changing every frame beneath its blur, and the page kept
+    // compositing them. A mark inside a dialog — Settings' own — is the one being looked at.
+    const inDialog = Boolean(svgRef.current?.closest('[role="dialog"]'));
+    let covered = !inDialog && useSettingsStore.getState().open;
+    const tick = (now: number) => {
+      if (!onScreen || covered) {
+        raf = 0;
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+      const { cfg: c, state: st, resting: asleep } = live.current;
+      const t = (now / 1000) * c.speed;
+      settle += ((asleep ? 1 : 0) - settle) * 0.18;
+      if (asleep && now >= nextGlance) {
+        restGx = (Math.random() * 2 - 1) * 0.6 * c.gazeRange;
+        restGy = (Math.random() * 2 - 1) * 0.35 * c.gazeRange;
+        nextGlance =
+          now +
+          REST_GLANCE.minMs +
+          Math.random() * (REST_GLANCE.maxMs - REST_GLANCE.minMs);
+      }
+      // Settled with nothing under way, it is drawn once more as it will stay and asks for no
+      // frame until its next blink or glance: faces drawn every frame were the largest part of
+      // an idle screen's drawing (config CREW_REST)
+      const quiet =
+        asleep &&
+        settle > 0.985 &&
+        blinkStart === 0 &&
+        queuedBlink === 0 &&
+        Math.abs(gx - restGx) < 0.05 &&
+        Math.abs(gy - restGy) < 0.05;
+      if (quiet) settle = 1;
+      // A computer that asks for less motion gets each face drawn once, as an icon is
+      if (quiet || live.current.still || calm) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      if (quiet && !live.current.still && !calm) {
+        clearTimeout(nap);
+        nap = setTimeout(
+          () => {
+            nap = undefined;
+            if (onScreen && !covered && !raf) raf = requestAnimationFrame(tick);
+          },
+          Math.max(0, Math.min(nextBlink, nextGlance) - now),
+        );
+      }
+
+      // Read before anything below writes (boxOf).
+      const svg =
+        c.follow && pointer.live && eyesRef.current && !asleep
+          ? svgRef.current
+          : null;
+      if (followed && followed !== svg) boxes.delete(followed);
+      followed = svg;
+      const box = svg ? boxOf(svg, now) : null;
+
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const wanted = STATE_SHAPE[st];
+      for (const key of SHAPE_KEYS) {
+        shape[key] += (wanted[key] - shape[key]) * 0.06;
+      }
+      churnPhase += dt * shape.churnSpeed * c.speed;
+
+      // Audio at 60 fps has little frame-to-frame correlation, so nothing below reads
+      // level as position: onsets become spring impulses, only the phrase average is tracked.
+      const spec = st === "speaking" ? live.current.getSpectrum?.() : undefined;
+      // A voice is loud and narrow, so its raw bands hold the mark swollen and
+      // still; each band inside its own recent range moves with the words.
+      const heard = voice.read(spec ?? SILENT, dt);
+      let specSum = 0;
+      for (let k = 0; k < SPECTRUM_BANDS; k++) {
+        const target = heard.bands[k];
+        // Bands set the shape, so smooth hard; faster and small marks shimmer.
+        band[k] += (target - band[k]) * c.bandEase;
+        bandPhase[k] += dt * (0.05 + k * 0.018) * (k % 2 ? -1 : 1);
+        specSum += target;
+      }
+
+      const want = st === "speaking" ? clamp(heard.level, 0, 1) : 0;
+
+      fastLvl += (want - fastLvl) * 0.3;
+      lvl += (want - lvl) * 0.016;
+
+      // A syllable is the follower's onset. The gap must exceed the spring
+      // period or kicks pile up into a tremble.
+      if (heard.onset > 0 && now - lastOnset > 340) {
+        lastOnset = now;
+        // Slower springs integrate each impulse longer, so scale the kick with stiffness.
+        bobVel -= c.punch * Math.min(1, fastLvl * 1.6) * c.bobRate;
+      }
+      // k = 0.010 gives a period near 1.1 s.
+      const stiff = 0.01 * c.bobRate * c.bobRate;
+      bobVel += -bob * stiff - bobVel * 0.085 * c.bobRate;
+      bob += bobVel;
+
+      // Where the energy sits: 0 = all low, 1 = all high. Eased slowly, since a shape
+      // that changes per phoneme reads as flicker.
+      if (specSum > 0.04) {
+        let weighted = 0;
+        for (let k = 0; k < SPECTRUM_BANDS; k++) weighted += band[k] * k;
+        bright += (weighted / specSum / (SPECTRUM_BANDS - 1) - bright) * 0.04;
+      } else {
+        bright += (0.5 - bright) * 0.03;
+      }
+
+      // Pick the next beat and read this frame's values from it.
+      const beatScale = shape.dwell;
+
+      if (c.idle && !asleep && !beat && now >= nextBeat) {
+        const key = pickBeat(st);
+        const spec = BEATS[key];
+        const dir = Math.floor(Math.random() * 8) * (Math.PI / 4);
+        beat = {
+          key,
+          start: now,
+          dur: spec.dur[0] + Math.random() * (spec.dur[1] - spec.dur[0]),
+          dx: Math.cos(dir),
+          // Vertical range is smaller, like real eyes; thinking biases upward.
+          dy: Math.sin(dir) * 0.7 - (st === "thinking" ? 0.5 : 0),
+        };
+      }
+
+      let act = STILL;
+      // Asleep, a glance in the middle of playing is let go: frozen half-way it read as a twitch
+      if (asleep) beat = null;
+      if (beat) {
+        const p = (now - beat.start) / beat.dur;
+        if (p >= 1) {
+          beat = null;
+          // liveliness 0: one beat every ~9 s; 100: every ~1.6 s.
+          const gap = (9000 - c.liveliness * 74) * beatScale;
+          nextBeat = now + gap * (0.6 + Math.random() * 0.8);
+        } else {
+          act = { ...STILL, ...BEATS[beat.key].play(p, beat.dx, beat.dy) };
+          if (act.blinkIn > 0 && queuedBlink === 0) {
+            queuedBlink = now + act.blinkIn;
+          }
+        }
+      }
+
+      if (lifeRef.current) {
+        const amp = ((c.breathe * shape.breathe) / 100) * (1 - settle);
+        const swell = (lvl * c.pulse) / 300 - bob * 0.05;
+        const tall = ((0.45 - bright) / 0.45) * lvl * (c.stretch / 100);
+        // aspect preserves volume: one axis multiplies, the other divides, so a state
+        // change does not read as resizing.
+        const sy =
+          ((1 + amp * Math.sin(t * 1.6 + phase) - swell * 0.75 + tall) *
+            shape.body *
+            act.scale) /
+          shape.aspect;
+        const sx =
+          (1 + swell - tall * 0.8) * shape.body * act.scale * shape.aspect;
+        const rot =
+          amp * 25 * Math.sin(t * 1.1 + phase * 1.7) + act.rot + shape.lean;
+        const tx =
+          CENTER + amp * 90 * Math.sin(t * 0.7 + phase * 0.6) + act.bodyX;
+        const ty =
+          CENTER +
+          amp * 120 * Math.sin(t * 1.3 + phase * 2.3) +
+          act.bodyY +
+          bob * c.pulse * 2;
+        lifeRef.current.setAttribute(
+          "transform",
+          `translate(${f(tx)} ${f(ty)}) rotate(${f(rot)}) scale(${sx.toFixed(4)} ${sy.toFixed(4)}) translate(${-CENTER} ${-CENTER})`,
+        );
+      }
+
+      // Paints run on plain seconds, not `c.speed`: they are surface, not mood.
+      const paintLook = live.current.look;
+      if (paintLook) {
+        const secs = now / 1000;
+        const grow = live.current.grow;
+        if (paintLook === "flow") {
+          // Slanted and sliding one run every 3.6 s, so the colours meet at no point.
+          paintRef.current?.setAttribute(
+            "gradientTransform",
+            `rotate(-35 ${CENTER} ${CENTER}) translate(${f(-((secs / 3.6) % 1) * spanOf(grow))} 0)`,
+          );
+        } else if (paintLook === "aurora") {
+          for (const [i, curtain] of CURTAINS.entries()) {
+            const e = 0.5 - 0.5 * Math.cos((secs / curtain.period) * TAU);
+            curtainRefs.current[i]?.setAttribute(
+              "transform",
+              `translate(${f(curtain.sway * e)} 0) translate(${curtain.cx} ${CURTAIN_Y}) skewX(${f(20 * e - 10)}) scale(1 ${f(1 + 0.18 * e)}) translate(${-curtain.cx} ${-CURTAIN_Y})`,
+            );
+          }
+        }
+      }
+
+      // Eight bands folded into three, driving harmonics 2..4 only; higher harmonics on
+      // an already bumpy silhouette read as noise.
+      const lowE = (band[0] + band[1] + band[2]) / 3;
+      const midE = (band[3] + band[4]) / 2;
+      const highE = (band[5] + band[6] + band[7]) / 3;
+      const energy = lowE + midE + highE;
+      const rippling = energy > 0.03 && c.ripple > 0;
+      const churning = shape.churn > 0;
+
+      // Rebuild the outline only while something deforms it.
+      if (headRef.current && (rippling || churning)) {
+        const churnT = churnPhase;
+        const next = live.current.radii.map((r, i) => {
+          const th = (i / RES) * TAU;
+          let out = r;
+          if (rippling) {
+            out +=
+              c.ripple *
+              (lowE * Math.sin(2 * th + bandPhase[0]) +
+                midE * 0.7 * Math.sin(3 * th + bandPhase[1]) +
+                highE * 0.5 * Math.sin(4 * th + bandPhase[2]));
+          }
+          if (churning) {
+            out +=
+              shape.churn *
+              (0.65 * Math.sin(2 * th + churnT) +
+                0.35 * Math.sin(3 * th - churnT * 1.4 + phase));
+          }
+          return out;
+        });
+        const d = radiiToPath(next);
+        headRef.current.setAttribute("d", d);
+        clipRef.current?.setAttribute("d", d);
+        maskHeadRef.current?.setAttribute("d", d);
+      }
+
+      if (eyesRef.current) {
+        let tgx = 0;
+        let tgy = 0;
+        if (box && box.width > 0) {
+          tgx =
+            clamp(
+              (pointer.x - (box.left + box.width / 2)) / (box.width * 1.5),
+              -1,
+              1,
+            ) * c.gazeRange;
+          tgy =
+            clamp(
+              (pointer.y - (box.top + box.height / 2)) / (box.height * 1.5),
+              -1,
+              1,
+            ) * c.gazeRange;
+        }
+        // At rest the eyes look where the last glance left them
+        if (asleep && !box) {
+          tgx = restGx;
+          tgy = restGy;
+        }
+        gx += (tgx - gx) * 0.12;
+        gy += (tgy - gy) * 0.12;
+        // Two offset sines so the drift never lands on a beat.
+        const drift =
+          (1 - settle) *
+          c.float *
+          shape.float *
+          (0.62 * Math.sin(t * 1.15 + phase) +
+            0.38 * Math.sin(t * 0.47 + phase * 2.1));
+
+        let sy = 1;
+        // Crossed-out eyes do not blink.
+        if (blinkStart === 0 && !live.current.crossed) {
+          if (queuedBlink > 0 && now >= queuedBlink) {
+            blinkStart = now;
+            queuedBlink = 0;
+          } else if (c.blink && now >= nextBlink) {
+            blinkStart = now;
+          }
+          // No two blinks quite the same length either.
+          if (blinkStart > 0) blinkLength = 110 + Math.random() * 60;
+        }
+        if (blinkStart > 0) {
+          const p = (now - blinkStart) / blinkLength;
+          if (p >= 1) {
+            blinkStart = 0;
+            nextBlink = now + blinkGap() * shape.blink;
+          } else {
+            sy = 1 - Math.sin(Math.PI * p) * 0.94;
+          }
+        }
+        const eyesAt = `translate(${f(gx + act.eyeX + shape.gazeX + live.current.gazeX)} ${f(gy + drift + act.eyeY + shape.gazeY + live.current.gazeY)}) translate(${CENTER} ${c.eyeY}) scale(1 ${sy.toFixed(3)}) translate(${-CENTER} ${-c.eyeY})`;
+        eyesRef.current.setAttribute("transform", eyesAt);
+        inkEyesRef.current?.setAttribute("transform", eyesAt);
+
+        // Each eye scales about its own center; scaling both together widens the gap instead.
+        const eyeWid = act.eyeWid * (1 - lvl * 0.13) * shape.eyes;
+        const eyeLen = act.eyeLen * (1 + lvl * 0.04) * shape.eyes;
+
+        const half = c.eyeGap / 2;
+        for (const [i, ref] of [eyeLRef, eyeRRef].entries()) {
+          if (!ref.current) continue;
+          const cx = CENTER + (i === 0 ? -half : half);
+          // Rotate into the eye's own frame before scaling so `eyeLen` still means
+          // shorter when the eye is tilted.
+          const tilt = i === 0 ? c.eyeTilt : c.eyeTilt + c.eyeSkew;
+          const len = eyeLen.toFixed(3);
+          const wid = eyeWid.toFixed(3);
+          const eyeAt = `translate(${f(cx)} ${c.eyeY}) rotate(${f(tilt)}) scale(${len} ${wid}) rotate(${f(-tilt)}) translate(${f(-cx)} ${-c.eyeY})`;
+          ref.current.setAttribute("transform", eyeAt);
+          (i === 0 ? inkEyeLRef : inkEyeRRef).current?.setAttribute(
+            "transform",
+            eyeAt,
+          );
+        }
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+    wake.current = () => {
+      clearTimeout(nap);
+      nap = undefined;
+      if (onScreen && !covered && !raf) raf = requestAnimationFrame(tick);
+    };
+    const unwatch = svgRef.current
+      ? watchOnScreen(svgRef.current, (on) => {
+          onScreen = on;
+          if (on && !covered && !raf) raf = requestAnimationFrame(tick);
+        })
+      : undefined;
+    const unhold = inDialog
+      ? undefined
+      : useSettingsStore.subscribe((state) => {
+          covered = state.open;
+          if (!covered && onScreen && !raf) raf = requestAnimationFrame(tick);
+        });
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(nap);
+      unwatch?.();
+      unhold?.();
+      if (followed) boxes.delete(followed);
+    };
+  }, []);
+
+  // Waking is a change of prop, which the loop, stopped between blinks at rest, would not see
+  useEffect(() => {
+    if (!resting) wake.current();
+  }, [resting]);
+
+  const nAngle = (cfg.notifyAngle * Math.PI) / 180;
+  const ink = spec ? `url(#${paintId})` : "var(--fg)";
+  // Smaller marks get a thicker, wider X: at 18px the 112px stroke is under a pixel.
+  const xHalf = f(18 - 3 * grow);
+  const xStroke = f(22 - 9 * grow);
+  const eye = (d: string, cx: number, color: string) =>
+    eyesOut ? (
+      <path
+        d={`M${cx - xHalf} ${cfg.eyeY - xHalf}L${cx + xHalf} ${cfg.eyeY + xHalf}M${cx + xHalf} ${cfg.eyeY - xHalf}L${cx - xHalf} ${cfg.eyeY + xHalf}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={xStroke}
+        strokeLinecap="round"
+      />
+    ) : (
+      <path d={d} fill={color} />
+    );
+
+  return (
+    <svg
+      ref={svgRef}
+      data-slot="bot-mark"
+      aria-hidden="true"
+      className={className}
+      viewBox={VIEW_BOX}
+      width={size}
+      height={size}
+      style={{ overflow: "visible", "--fg": theFg } as React.CSSProperties}
+    >
+      <defs>
+        <clipPath id={clipId}>
+          <path ref={clipRef} d={headPath} />
+        </clipPath>
+        {/* Filled marks mask the eyes and readout out of the silhouette; painting them
+            in a background colour breaks on tinted or translucent surfaces. */}
+        {cfg.fill && (
+          <mask id={maskId} maskUnits="userSpaceOnUse">
+            <path ref={maskHeadRef} d={headPath} fill="#fff" />
+            <g clipPath={`url(#${clipId})`}>
+              <g ref={eyesRef}>
+                <g ref={eyeLRef}>
+                  {eye(eyeL, CENTER - cfg.eyeGap / 2, "#000")}
+                </g>
+                <g ref={eyeRRef}>
+                  {eye(eyeR, CENTER + cfg.eyeGap / 2, "#000")}
+                </g>
+              </g>
+            </g>
+            {notifying && (
+              <circle
+                cx={f(CENTER + Math.cos(nAngle) * cfg.notifyDist)}
+                cy={f(CENTER + Math.sin(nAngle) * cfg.notifyDist)}
+                r={cfg.notifyR + cfg.notifyRing}
+                fill="#000"
+                className={NOTIFY_POP}
+              />
+            )}
+          </mask>
+        )}
+        {spec && (
+          <linearGradient
+            ref={paintRef}
+            id={paintId}
+            {...paintAxis(spec.look, grow)}
+          >
+            {paintStops(spec).map((stop) => (
+              <stop
+                key={`${stop.offset}-${stop.color}`}
+                offset={stop.offset}
+                stopColor={stop.color}
+              />
+            ))}
+          </linearGradient>
+        )}
+        {spec?.look === "aurora" && (
+          <filter
+            id={curtainId}
+            filterUnits="userSpaceOnUse"
+            x={-PAD * 4}
+            y={-PAD * 4}
+            width={BOX + PAD * 8}
+            height={BOX + PAD * 8}
+            colorInterpolationFilters="sRGB"
+          >
+            <feGaussianBlur stdDeviation={f(curtainBlurOf(grow))} />
+          </filter>
+        )}
+      </defs>
+      <g ref={lifeRef}>
+        {cfg.fill ? (
+          // Everything the body wears shares its one mask, so a paint's layers keep the eyes cut.
+          <g mask={`url(#${maskId})`}>
+            <path ref={headRef} d={headPath} fill={ink} />
+            {spec?.look === "aurora" && (
+              // Blurred on a layer wider than the face, so the curtains melt into the night
+              // while the mask keeps the outline and the eyes sharp.
+              <g filter={`url(#${curtainId})`}>
+                <rect
+                  x={-PAD * 4}
+                  y={-PAD * 4}
+                  width={BOX + PAD * 8}
+                  height={BOX + PAD * 8}
+                  fill={ink}
+                />
+                {CURTAINS.map((curtain, i) => (
+                  <ellipse
+                    key={curtain.cx}
+                    ref={(node) => {
+                      curtainRefs.current[i] = node;
+                    }}
+                    cx={curtain.cx}
+                    cy={CURTAIN_Y}
+                    rx={f(curtainRxOf(grow))}
+                    ry={138}
+                    fill={spec.colors[2 + i]}
+                    style={{ mixBlendMode: "screen" }}
+                  />
+                ))}
+              </g>
+            )}
+          </g>
+        ) : (
+          <path
+            ref={headRef}
+            d={headPath}
+            fill="none"
+            stroke={ink}
+            strokeWidth={cfg.strokeWidth}
+            strokeLinejoin="round"
+          />
+        )}
+        {cfg.fill && edge === "dark" && (
+          // Eye holes show the page, and a dark body on a dark page swallows them.
+          <g clipPath={`url(#${clipId})`} opacity={0.92}>
+            <g ref={inkEyesRef}>
+              <g ref={inkEyeLRef}>
+                {eye(eyeL, CENTER - cfg.eyeGap / 2, "#fff")}
+              </g>
+              <g ref={inkEyeRRef}>
+                {eye(eyeR, CENTER + cfg.eyeGap / 2, "#fff")}
+              </g>
+            </g>
+          </g>
+        )}
+        {/* Outlined marks have no silhouette to cut into, so the eyes are drawn. */}
+        {!cfg.fill && (
+          <g clipPath={`url(#${clipId})`}>
+            <g ref={eyesRef}>
+              <g ref={eyeLRef}>{eye(eyeL, CENTER - cfg.eyeGap / 2, ink)}</g>
+              <g ref={eyeRRef}>{eye(eyeR, CENTER + cfg.eyeGap / 2, ink)}</g>
+            </g>
+          </g>
+        )}
+        {notifying && (
+          // What waits on an answer and a result nobody has opened wear the same dot, the one
+          // warm that says a thing wants the user (globals `--waiting`, the user's pick).
+          <circle
+            cx={f(CENTER + Math.cos(nAngle) * cfg.notifyDist)}
+            cy={f(CENTER + Math.sin(nAngle) * cfg.notifyDist)}
+            r={cfg.notifyR}
+            className={cn("fill-waiting", NOTIFY_POP)}
+          />
+        )}
+      </g>
+    </svg>
+  );
+});
+
+/** Mark for bots as a group (the settings section icon). No color or shape of its own:
+ *  `currentColor` and the default silhouette, since it names the room, not a bot. */
+export function BotsMark({
+  size = 16,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  // Still: drawn every frame, the corner's and Settings' icon was a share of an idle screen's
+  // cost of its own (renderer 25% to 9% with it hidden; UX test, performance)
+  return <BotMark size={size} seed="bots" still className={className} />;
+}

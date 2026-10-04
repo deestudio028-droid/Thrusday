@@ -1,0 +1,94 @@
+name: Release
+
+# Nobody tags anything by hand. Every push to main updates one open "Release PR"
+# that carries the next version and the changelog it earned; merging that PR is
+# the decision to release, and everything below happens from it.
+on:
+  push:
+    branches: [main]
+  # The escape hatch for the half that can still fail on its own: a release is
+  # made and the publish after it is not (a bad token, a registry outage, a
+  # guard that was wrong). Re-running the old run would replay the old
+  # workflow file, so the fix is dispatched from main instead.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Keeps the Release PR in step with main. On the push that merges it, this
+  # tags the commit, publishes the GitHub Release, and says so in `released`.
+  prepare:
+    # Forks deploy their own source; only upstream publishes its npm package.
+    if: github.repository == 'cgoinglove/thursday-agent'
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      # The version release-please decided, rather than the tag it wrote it
+      # into: the tag carries the package name too, and taking it apart is
+      # what stopped 0.1.0 from reaching npm.
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # The same check CI runs on every push — types, lint, every suite and the build, on the
+  # newest Node and on 22.18 — before anything reaches npm. pack.mts alone runs no test.
+  check:
+    needs: prepare
+    if: needs.prepare.outputs.released == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/ci.yml
+
+  # Only on the run that created a release, once the check passed. A tag written with the
+  # default token starts no workflow of its own, so npm is published from here rather than
+  # from a `push: tags` trigger that would never fire. Dispatched by hand, only from main:
+  # a branch's own workflow file must not publish.
+  publish:
+    needs: [prepare, check]
+    if: (needs.prepare.outputs.released == 'true' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm trusts this run itself (trusted publishing, set on the package's
+      # npm settings for this repository and this file), so no token is stored;
+      # the same identity signs the package with a link back to this commit.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # Lints, type checks, builds and writes dist/package.json — the same gates
+      # a local `pnpm release` runs, defined once (scripts/pack.mts).
+      - run: node scripts/pack.mts
+
+      # release-please bumped package.json in the commit being built, so the two
+      # cannot disagree; check it anyway, since a mismatch is permanent once
+      # published. A dispatched run has no release to compare against — it is
+      # publishing whatever main says, which is the point of it.
+      - name: Release matches the version
+        if: needs.prepare.outputs.released == 'true'
+        run: |
+          packed="$(node -p "require('./dist/package.json').version")"
+          [ "$RELEASED" = "$packed" ] || {
+            echo "released $RELEASED != package $packed"; exit 1;
+          }
+        env:
+          RELEASED: ${{ needs.prepare.outputs.version }}
+
+      # Trusted publishing needs npm 11.5.1 or later, whatever the Node release ships.
+      - run: npm install -g npm@11
+
+      - run: npm publish ./dist --provenance --access public

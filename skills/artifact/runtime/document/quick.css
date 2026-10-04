@@ -1,0 +1,871 @@
+/* A document: a page a bot writes to be read. Its contents stand in a pane beside it and
+   the paper in the middle at a reading width. Every rule for what is written on the
+   paper is held to it by :where(.pg-paper), which weighs nothing: the shell's head and
+   menus are never styled as prose, and whatever a bot writes for its own page wins over
+   these defaults. The head and the theme are the shell's (shell.css); the document's own
+   frame is named `pg-`. No network, no build, light and dark, phone width, print. */
+
+/* The document's own words for its colours, which the theme turns with the shell's.
+   Muted text is mixed from the ink so it clears 4.5:1 on the paper and on a tint. */
+:root {
+  --bg: var(--sh-paper);
+  --fg: var(--sh-ink);
+  --muted: color-mix(in srgb, var(--sh-ink) 58%, var(--sh-paper));
+  --line: var(--sh-line);
+  --soft: var(--sh-soft);
+  /* The maker's colour (shell --sh-maker): a document says whose it is */
+  --accent: var(--sh-maker-text);
+  --good: var(--sh-good);
+  --warn: var(--sh-warn);
+  --bad: var(--sh-bad);
+  /* A quiet ground for a note set apart, a step off the paper in either theme */
+  --callout: color-mix(in srgb, var(--sh-ink) 4.5%, var(--sh-paper));
+  --round: 12px;
+}
+
+body {
+  height: auto;
+  min-height: 100%;
+}
+/* The contents beside the column that is read: the paper, then who made it, in the flow, so
+   the signature comes after the last line and never stands over the page */
+.pg-page {
+  display: flex;
+  align-items: flex-start;
+  min-height: calc(100vh - var(--sh-head));
+}
+.pg-read {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The contents, drawn from the headings (quick.js), marking the section being read. The
+   reader can put them away; a page with fewer than two sections has none to show. */
+.pg-toc {
+  position: sticky;
+  top: var(--sh-head);
+  width: 232px;
+  /* The whole height under the head, as a pane is, however short the list */
+  height: calc(100vh - var(--sh-head));
+  padding: 2.5rem 0.75rem 1rem 1rem;
+  border-right: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pg-toc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pg-toc ol ol {
+  padding-left: 0.75rem;
+  font-size: 12px;
+}
+.pg-toc a {
+  display: block;
+  padding: 0.3125rem 0.5rem;
+  border-radius: calc(var(--sh-radius) * 0.6);
+  color: var(--sh-ink-2);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-toc a:hover {
+  background: var(--sh-soft);
+  color: var(--sh-ink);
+}
+.pg-toc a.pg-on {
+  background: var(--sh-brand-soft);
+  color: var(--sh-brand);
+  font-weight: 500;
+}
+body.pg-no-toc .pg-toc,
+body.pg-toc-shut .pg-toc {
+  display: none;
+}
+/* Narrow, the contents open over the page when asked for, and are away otherwise */
+@media (max-width: 900px) {
+  .pg-toc {
+    display: none;
+  }
+  body.pg-toc-open:not(.pg-no-toc) .pg-toc {
+    display: block;
+    position: fixed;
+    z-index: 4;
+    top: var(--sh-head);
+    left: 0;
+    bottom: 0;
+    height: auto;
+    border-right: 1px solid var(--sh-line);
+    background: var(--sh-paper);
+    box-shadow: var(--sh-shadow);
+  }
+}
+
+.pg-paper {
+  flex: 1;
+  min-width: 0;
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 0;
+  color: var(--fg);
+  font: 16px / 1.7 var(--sh-font);
+}
+.pg-paper:focus {
+  outline: 0;
+}
+/* A heading jumped to from the contents lands under the head, not behind it */
+:where(.pg-paper) :is(h2, h3) {
+  scroll-margin-top: calc(var(--sh-head) + 1rem);
+}
+.sh-face .pg-paper {
+  padding-top: 1.75rem;
+}
+/* The signature ends the column the paper is read in */
+.pg-read > .sh-sign {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+/* Headings as the app sets them: bold, tight, and the words under them a quiet grey */
+:where(.pg-paper) h1 {
+  margin: 0 0 0.75rem;
+  font-size: 2.375rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+:where(.pg-paper) h2 {
+  margin: 3rem 0 0.75rem;
+  font-size: 1.375rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.022em;
+}
+:where(.pg-paper) h3 {
+  margin: 1.75rem 0 0.375rem;
+  font-size: 1.0625rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+:where(.pg-paper) p,
+:where(.pg-paper) ul,
+:where(.pg-paper) ol,
+:where(.pg-paper) table,
+:where(.pg-paper) figure,
+:where(.pg-paper) blockquote,
+:where(.pg-paper) pre {
+  margin: 0 0 1rem;
+}
+:where(.pg-paper) ul,
+:where(.pg-paper) ol {
+  padding-left: 1.3rem;
+}
+:where(.pg-paper) li + li {
+  margin-top: 0.25rem;
+}
+/* A link is the ink, underlined in the maker's colour */
+:where(.pg-paper) a {
+  color: inherit;
+  text-decoration-color: var(--sh-maker);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+:where(.pg-paper) small,
+:where(.pg-paper) .muted {
+  color: var(--muted);
+}
+:where(.pg-paper) small {
+  font-size: 0.85rem;
+}
+:where(.pg-paper) hr {
+  margin: 2.4rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+:where(.pg-paper) img,
+:where(.pg-paper) svg,
+:where(.pg-paper) video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.6rem;
+}
+:where(.pg-paper) figcaption {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+:where(.pg-paper) blockquote {
+  padding: 0.1rem 0 0.1rem 1.1rem;
+  border-left: 2px solid var(--sh-ink);
+  font-size: 1.0625rem;
+}
+:where(.pg-paper) code,
+:where(.pg-paper) pre {
+  font-family: var(--sh-mono);
+}
+/* A figure lines up in the page's own type, each digit as wide as the next */
+:where(.pg-paper) .num {
+  font-variant-numeric: tabular-nums;
+}
+:where(.pg-paper) code {
+  padding: 0.1em 0.35em;
+  border-radius: 0.3rem;
+  background: var(--soft);
+  font-size: 0.88em;
+}
+:where(.pg-paper) pre {
+  overflow-x: auto;
+  padding: 1rem;
+  border-radius: 0.6rem;
+  background: var(--soft);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+:where(.pg-paper) pre code {
+  padding: 0;
+  background: none;
+}
+
+/* A table scrolls inside its wrapper on a phone: <div class="scroll"><table>…</table></div> */
+:where(.pg-paper) .scroll {
+  overflow-x: auto;
+}
+/* A table as the app draws one (components/ui/table.tsx): its heads small in the mono type,
+   and a hairline between rows */
+:where(.pg-paper) table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+:where(.pg-paper) th,
+:where(.pg-paper) td {
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+:where(.pg-paper) th {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  color: var(--muted);
+  font: 400 11px / 1.5 var(--sh-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+:where(.pg-paper) tbody tr:last-child td {
+  border-bottom: 0;
+}
+:where(.pg-paper) td.num,
+:where(.pg-paper) th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The one the page recommends: the maker's colour, faintly */
+:where(.pg-paper) tr.best td {
+  background: color-mix(in srgb, var(--sh-maker) 7%, transparent);
+}
+
+/* Over the title, what kind of document this is: Report, Memo, Notes — small, in the mono
+   type, as written, the way the app labels a thing */
+:where(.pg-paper) .kicker {
+  margin: 0 0 0.875rem;
+  color: var(--muted);
+  font: 400 13px / 1.4 var(--sh-mono);
+}
+/* Under the title: as of when, by whom, for whom — as chips, on one line. A line of
+   words, not a flex row: the editor's caret has no place between a row's pieces. */
+:where(.pg-paper) .byline {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 2.2;
+}
+:where(.pg-paper) .byline .chip {
+  margin-right: 0.15rem;
+}
+/* The lead: what the reader should take away, in one or two sentences */
+:where(.pg-paper) .lede {
+  margin-bottom: 2.25rem;
+  font-size: 1.1875rem;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+}
+
+/* A chip: a fact that stands on its own — a date, a person, a status. .date and .who
+   carry a glyph; .status reads as a setting someone can change, with a tone from
+   .good .warn .bad */
+:where(.pg-paper) .chip {
+  /* Not inline-flex: in a page being edited, a caret put beside a flex box lands at
+     the start of its words, so what is typed after a chip went in front of it */
+  display: inline-block;
+  padding: 0.125rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: 0.1em;
+}
+:where(.pg-paper) .chip.date::before,
+:where(.pg-paper) .chip.who::before {
+  content: "";
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: 0.3rem;
+  vertical-align: -0.1em;
+  background: currentColor;
+  opacity: 0.55;
+  mask: center / contain no-repeat;
+}
+:where(.pg-paper) .chip.date::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round'%3E%3Crect x='3' y='5' width='18' height='16' rx='2'/%3E%3Cpath d='M3 10h18M8 3v4M16 3v4'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .chip.who::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4 21a8 8 0 0 1 16 0'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .chip.who.bot::before {
+  display: none;
+}
+/* The bot that wrote it, by its face (shell/wear.mjs markSvg) */
+:where(.pg-paper) .chip .sh-mark {
+  margin-right: 0.3rem;
+  vertical-align: -0.15em;
+}
+/* How long it takes to read, worked out as it opens (quick.js); never kept in the file */
+:where(.pg-paper) .chip.read::before {
+  content: "";
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: 0.3rem;
+  vertical-align: -0.1em;
+  background: currentColor;
+  opacity: 0.7;
+  mask:
+    center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .chip.read {
+  color: var(--muted);
+}
+:where(.pg-paper) .chip.status::after {
+  content: "";
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-left: 0.45rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-0.15em) rotate(45deg);
+  opacity: 0.6;
+}
+:where(.pg-paper) .chip.good,
+:where(.pg-paper) .chip.warn,
+:where(.pg-paper) .chip.bad {
+  color: inherit;
+  border-color: transparent;
+}
+:where(.pg-paper) .chip.good {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+}
+:where(.pg-paper) .chip.warn {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+:where(.pg-paper) .chip.bad {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+}
+
+/* A checklist: <ul class="check"><li><input type="checkbox" checked> done</li> */
+:where(.pg-paper) ul.check {
+  padding-left: 0;
+  list-style: none;
+}
+/* The box hangs beside the item's first line, and the item stays a line of words */
+:where(.pg-paper) ul.check li {
+  position: relative;
+  padding-left: 1.4rem;
+}
+:where(.pg-paper) ul.check input {
+  position: absolute;
+  top: 0.46rem;
+  left: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* A ticked item steps back, its chips with it */
+:where(.pg-paper) ul.check li:has(> input:checked),
+:where(.pg-paper) ul.check li:has(> input:checked) .chip {
+  color: var(--muted);
+}
+
+/* A section not written yet, or a fact still to come: what stands where it will go */
+:where(.pg-paper) .pending {
+  margin: 0 0 1rem;
+  padding: 1rem 1.125rem;
+  border: 1px dashed color-mix(in srgb, var(--sh-ink) 22%, transparent);
+  border-radius: var(--round);
+  color: var(--muted);
+}
+
+/* Sources at the end: <ol class="sources"><li><a href>…</a> · read 23 Sep</li> */
+:where(.pg-paper) ol.sources {
+  padding-left: 1.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+:where(.pg-paper) ol.sources li + li {
+  margin-top: 0.15rem;
+}
+/* A footnote: <sup><a href="#fn1">1</a></sup> in the text, <ol class="footnotes"> at the end */
+:where(.pg-paper) sup {
+  line-height: 0;
+}
+:where(.pg-paper) sup.fn a {
+  padding: 0 0.15em;
+  font-weight: 600;
+  text-decoration: none;
+}
+:where(.pg-paper) .fn-back {
+  text-decoration: none;
+}
+/* A footnote read where it is cited: the note, shown beside the number (quick.js) */
+#fn-card {
+  position: absolute;
+  z-index: 30;
+  max-width: 22rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+#fn-card .fn-back {
+  display: none;
+}
+/* A table's column put in order by the button in its heading (quick.js): shown on the
+   heading under the pointer, and on the one the column is in order by. Its arrow is drawn,
+   so it holds no words of the heading's. */
+.pg-sort {
+  float: right;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0 -0.25rem 0 0.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1.25rem;
+  cursor: pointer;
+  opacity: 0;
+}
+.pg-sort::before {
+  content: "↕";
+}
+th:hover > .pg-sort,
+.pg-sort:focus-visible,
+th[aria-sort] > .pg-sort {
+  opacity: 1;
+}
+.pg-sort:hover {
+  background: var(--soft);
+  color: var(--fg);
+}
+th[aria-sort] > .pg-sort {
+  color: var(--accent, currentColor);
+}
+th[aria-sort="ascending"] > .pg-sort::before {
+  content: "↑";
+}
+th[aria-sort="descending"] > .pg-sort::before {
+  content: "↓";
+}
+:where(.pg-paper) ol.footnotes {
+  margin-top: 2.5rem;
+  padding: 0 0 0 1.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Tabs: <div class="tabs"><section data-tab="This week">…</section><section data-tab="Sources">…</section></div> */
+:where(.pg-paper) .tabs {
+  margin-bottom: 1rem;
+}
+:where(.pg-paper) .tabs [role="tablist"] {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+:where(.pg-paper) .tabs [role="tab"] {
+  padding: 0.5rem 0.9rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+:where(.pg-paper) .tabs [role="tab"][aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+:where(.pg-paper) .tabs [role="tab"]:first-child {
+  padding-left: 0;
+}
+:where(.pg-paper) .tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 0.3rem;
+}
+:where(.pg-paper) .tabs [role="tabpanel"] > :first-child {
+  margin-top: 0;
+}
+
+/* Two columns that stack on a phone: <div class="cols"> */
+:where(.pg-paper) .cols {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  margin-bottom: 1rem;
+}
+/* Kept on one printed page, and a new printed page */
+:where(.pg-paper) .keep {
+  break-inside: avoid;
+}
+:where(.pg-paper) .break {
+  break-before: page;
+}
+
+/* Side by side, stacking on a phone: <div class="grid">…</div>; .grid.three for three */
+:where(.pg-paper) .grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  margin-bottom: 1rem;
+}
+:where(.pg-paper) .grid.three {
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+/* A card is a thing that stands on its own — an option to choose — so it has an edge and a
+   corner and no shadow. A figure is not one: a card holding a .stat is the figure on the
+   paper under a hairline. What a card holds starts at its top and ends at its bottom,
+   whatever the first and last are. */
+:where(.pg-paper) .card {
+  padding: 1rem 1.125rem;
+  border: 1px solid var(--line);
+  border-radius: var(--round);
+}
+:where(.pg-paper) .card:has(> .stat) {
+  padding: 0.875rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+:where(.pg-paper) .card > :first-child {
+  margin-top: 0;
+}
+:where(.pg-paper) .card > :last-child {
+  margin-bottom: 0;
+}
+
+/* One number that matters, with what it is under it */
+:where(.pg-paper) .stat {
+  margin-bottom: 0.25rem;
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+:where(.pg-paper) .stat + small {
+  display: block;
+  line-height: 1.45;
+}
+
+/* A note set apart; .good .bad .warn tint it */
+/* A note set apart as a callout: a quiet ground and a mark before it, or a tone's own wash
+   and mark. The mark hangs in the padding, so the note stays a block of words. */
+:where(.pg-paper) .note {
+  position: relative;
+  padding: 0.875rem 1.125rem 0.875rem 2.75rem;
+  border-radius: var(--round);
+  background: var(--callout);
+  print-color-adjust: exact;
+}
+:where(.pg-paper) .note::before {
+  content: "";
+  position: absolute;
+  top: calc(0.875rem + 0.2em);
+  left: 1rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  background: var(--muted);
+  mask:
+    center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 11v5M12 7.5v.5'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .note > :last-child {
+  margin-bottom: 0;
+}
+:where(.pg-paper) .good {
+  color: var(--good);
+}
+:where(.pg-paper) .bad {
+  color: var(--bad);
+}
+:where(.pg-paper) .warn {
+  color: var(--warn);
+}
+:where(.pg-paper) .note.good,
+:where(.pg-paper) .note.bad,
+:where(.pg-paper) .note.warn {
+  color: inherit;
+}
+:where(.pg-paper) .note.good {
+  background: color-mix(in srgb, var(--good) 10%, var(--bg));
+}
+:where(.pg-paper) .note.bad {
+  background: color-mix(in srgb, var(--bad) 9%, var(--bg));
+}
+:where(.pg-paper) .note.warn {
+  background: color-mix(in srgb, var(--warn) 11%, var(--bg));
+}
+:where(.pg-paper) .note.good::before {
+  background: var(--good);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='m8 12.5 2.7 2.7L16 9.5'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .note.warn::before {
+  background: var(--warn);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.2 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z'/%3E%3Cpath d='M12 10v4M12 17.5v.01'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .note.bad::before {
+  background: var(--bad);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='m9 9 6 6M15 9l-6 6'/%3E%3C/svg%3E");
+}
+:where(.pg-paper) .tag {
+  display: inline-block;
+  padding: 0.0625rem 0.5rem;
+  border-radius: 99px;
+  background: var(--callout);
+  font-size: 0.78rem;
+  color: var(--sh-ink-2);
+  white-space: nowrap;
+}
+
+/* A bar for one value out of a whole: <div class="bar" style="--at: 62%"></div> */
+:where(.pg-paper) .bar {
+  margin-bottom: 0.625rem;
+  height: 0.375rem;
+  border-radius: 99px;
+  background: linear-gradient(
+    to right,
+    var(--sh-maker) var(--at, 0%),
+    var(--sh-sunk) var(--at, 0%)
+  );
+  print-color-adjust: exact;
+}
+
+/* A toggle: its line and the words it opens, no frame */
+:where(.pg-paper) details {
+  margin-bottom: 1rem;
+}
+:where(.pg-paper) summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+:where(.pg-paper) details[open] > summary {
+  margin-bottom: 0.5rem;
+}
+:where(.pg-paper) details > :not(summary) {
+  margin-left: 1.25rem;
+}
+
+/* Editing: a block under the pointer, its handle in the gutter, the formatting that
+   floats over a selection, and the two small menus. All of it stands outside the paper,
+   so none of it is ever kept with it (quick.js cleans what is kept). */
+body.pg-editing .pg-paper > .pg-hot {
+  border-radius: 4px;
+  background: var(--sh-soft);
+  box-shadow: 0 0 0 6px var(--sh-soft);
+}
+.pg-grip,
+.pg-bubble,
+.pg-popover {
+  position: absolute;
+  z-index: 7;
+}
+.pg-grip {
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+}
+.pg-grip .sh-b {
+  color: var(--sh-ink-3);
+}
+.pg-bubble {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--sh-line);
+  border-radius: var(--sh-radius);
+  background: var(--sh-paper);
+  box-shadow: var(--sh-shadow);
+}
+.pg-bubble .sh-rule {
+  height: 16px;
+}
+.pg-popover {
+  top: auto;
+  right: auto;
+  min-width: 180px;
+}
+/* What Enter takes in the menu a `/` opened */
+.pg-popover .sh-item.pg-picked {
+  background: var(--sh-soft);
+}
+.pg-grip[hidden],
+.pg-bubble[hidden],
+.pg-popover[hidden] {
+  display: none;
+}
+/* A link is pressed for its card, which opens it (quick.js) */
+.pg-paper a[href] {
+  cursor: pointer;
+}
+.pg-link {
+  max-width: min(28rem, calc(100vw - 8px));
+}
+.pg-link-to {
+  min-width: 0;
+  padding: 0 0.375rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sh-ink-2);
+  font-size: 12px;
+}
+/* A chip is one piece in the words: a press opens its words, ringed while open */
+.pg-paper .chip:not(.read) {
+  cursor: pointer;
+}
+.pg-paper .chip[contenteditable="true"] {
+  cursor: text;
+  outline: 2px solid var(--sh-brand);
+  outline-offset: 1px;
+}
+
+/* Edits kept aside from another version of the file, over the paper until let go
+   (quick.js showKept): what they hold, set as the paper sets it, to copy back */
+.pg-kept-list {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 0;
+}
+.pg-kept-list[hidden] {
+  display: none;
+}
+.pg-kept {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--round);
+  background: var(--callout);
+}
+.pg-kept-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.75rem 0.875rem;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pg-kept-head p {
+  flex: 1 1 16rem;
+  margin: 0;
+  color: var(--sh-ink-2);
+}
+.pg-kept-head b {
+  color: var(--sh-warn);
+  font-weight: 600;
+}
+.pg-kept-tools {
+  display: flex;
+  gap: 0.25rem;
+}
+.pg-kept-words > :last-child {
+  margin-bottom: 0;
+}
+.pg-kept-words.pg-paper {
+  max-height: 20rem;
+  overflow: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0.25rem 0.875rem 0.5rem;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+@media print {
+  body {
+    display: block;
+  }
+  .pg-page {
+    display: block;
+    min-height: 0;
+  }
+  .pg-paper {
+    max-width: none;
+    padding: 0;
+  }
+  :where(.pg-paper) a {
+    color: inherit;
+  }
+  .pg-grip,
+  .pg-bubble,
+  .pg-popover,
+  .pg-kept-list,
+  th:not([aria-sort]) > .pg-sort,
+  :where(.pg-paper) .tabs [role="tablist"] {
+    display: none;
+  }
+  /* Every tab, one under another, headed by its name: nothing is lost on paper */
+  :where(.pg-paper) .tabs [role="tabpanel"] {
+    display: block !important;
+    margin-bottom: 1.5rem;
+  }
+  :where(.pg-paper) .tabs [role="tabpanel"]::before {
+    content: attr(data-tab);
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  :where(.pg-paper) :is(h2, h3, .keep) {
+    break-inside: avoid;
+  }
+  :where(.pg-paper) :is(h2, h3) {
+    break-after: avoid;
+  }
+}

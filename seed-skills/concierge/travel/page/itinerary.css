@@ -1,0 +1,1237 @@
+/* The itinerary's own look, under the artifact shell's head and type (put on by
+   itinerary.mjs): one file that opens offline, light and dark, phone to print. It is built the
+   way a traveller reads a trip: pictures first, the money and what is left to book always in
+   view, the way at a glance, what to do before leaving, then a day at a time — each place its
+   pictures, what to do there, what to watch for and its price. Every picture opens large in the
+   viewer at the end. Its colours are the shell's (app/globals.css); its one accent is the colour
+   of the bot that made it (--sh-maker), so the theme button and the maker reach it too. */
+:root {
+  --bg: var(--sh-paper);
+  --fg: var(--sh-ink);
+  --ink-2: var(--sh-ink-2);
+  --muted: var(--sh-ink-3);
+  --line: var(--sh-line);
+  /* A quiet ground a step off the paper, for what is grouped without a border */
+  --ground: color-mix(in srgb, var(--sh-ink) 4.5%, var(--sh-paper));
+  --accent: var(--sh-maker-text);
+  --accent-soft: color-mix(in srgb, var(--sh-maker) 12%, var(--sh-paper));
+  --warn: var(--sh-warn);
+  --warn-soft: color-mix(in srgb, var(--sh-warn) 11%, var(--sh-paper));
+  --round: 16px;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+html.viewing {
+  overflow: hidden;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px / 1.6 var(--sh-font);
+  text-wrap: pretty;
+  /* Korean and Japanese break between words, not inside them */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 1rem 4rem;
+}
+a {
+  color: inherit;
+  text-decoration-color: var(--sh-maker);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+img {
+  display: block;
+  max-width: 100%;
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.muted,
+small {
+  color: var(--muted);
+}
+.i {
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+}
+
+/* A picture: its credit small on its corner, the whole of it a way into the viewer */
+.ph {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  background: var(--ground);
+}
+.ph img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+  transition: transform 0.4s ease;
+}
+.ph:hover img {
+  transform: scale(1.03);
+}
+.ph figcaption {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  max-width: calc(100% - 1rem);
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 48%);
+  color: rgb(255 255 255 / 92%);
+  font-size: 10px;
+  line-height: 1.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph figcaption a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The hero: one large picture and four small, the way a place is shown before you go */
+.hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 6px;
+  height: min(30rem, 52vw);
+  margin-top: 1.25rem;
+  overflow: hidden;
+  border-radius: calc(var(--round) + 2px);
+}
+.hero .ph:first-child {
+  grid-row: 1 / 3;
+}
+/* The hero is the trip at a glance: who took each picture is said where it opens, not on it */
+.hero figcaption {
+  display: none;
+}
+.hero.n1 {
+  grid-template-columns: 1fr;
+}
+.hero.n2,
+.hero.n3 {
+  grid-template-columns: 2fr 1fr;
+}
+.hero.n2 .ph:nth-child(2) {
+  grid-row: 1 / 3;
+}
+.hero.n4 .ph:nth-child(4) {
+  grid-column: 2 / 4;
+}
+.hero .all {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.45rem 0.9rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--sh-paper);
+  color: var(--sh-ink);
+  font: 600 13px / 1.2 var(--sh-font);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 20%);
+  cursor: pointer;
+}
+
+/* The head: the title and the facts, and beside them the money */
+.head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: 2.5rem;
+  align-items: start;
+  padding-top: 1.75rem;
+}
+h1 {
+  margin: 0;
+  font-size: clamp(1.9rem, 4.2vw, 2.7rem);
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.lede {
+  margin: 0.75rem 0 0;
+  color: var(--ink-2);
+  font-size: 1.0625rem;
+  max-width: 40em;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.625rem;
+  margin-top: 1.5rem;
+}
+.fact {
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  background: var(--ground);
+}
+.fact b {
+  display: block;
+  font-size: 1.1875rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+.fact span {
+  display: block;
+  margin-top: 0.125rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+/* The money: what it costs, what is settled, what is left to price — what a traveller checks first */
+.money {
+  position: sticky;
+  top: calc(var(--sh-head) + 1rem);
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--round) + 2px);
+  background: var(--bg);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 4%),
+    0 12px 32px -18px rgb(0 0 0 / 25%);
+}
+.money h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  margin-top: 0.25rem;
+}
+.total b {
+  font-size: 1.875rem;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+.total span {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.each {
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+.bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin: 0.875rem 0 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+}
+.bar i {
+  display: block;
+  min-width: 4px;
+}
+/* One shade of the maker's colour a kind */
+.k-flight {
+  background: var(--sh-maker);
+}
+.k-stay {
+  background: color-mix(in srgb, var(--sh-maker) 72%, var(--sh-paper));
+}
+.k-food {
+  background: color-mix(in srgb, var(--sh-maker) 50%, var(--sh-paper));
+}
+.k-ticket {
+  background: color-mix(in srgb, var(--sh-maker) 34%, var(--sh-paper));
+}
+.k-transport {
+  background: color-mix(in srgb, var(--sh-maker) 22%, var(--sh-paper));
+}
+.k-other {
+  background: color-mix(in srgb, var(--sh-ink) 25%, var(--sh-paper));
+}
+.k-pending {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px
+    color-mix(in srgb, var(--sh-ink) 22%, var(--sh-paper));
+}
+.rows {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.rows li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 0.625rem;
+  align-items: baseline;
+  padding: 0.5rem 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.rows li + li {
+  border-top: 1px solid var(--line);
+}
+.rows small {
+  display: block;
+  font-size: 0.75rem;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  transform: translateY(1px);
+}
+.rows .v {
+  font-weight: 650;
+  white-space: nowrap;
+}
+.todo {
+  color: var(--warn);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+a.todo {
+  text-decoration-color: var(--warn);
+}
+.fx {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+section.block {
+  padding-top: 2.75rem;
+}
+h2 {
+  margin: 0 0 1rem;
+  font-size: 1.375rem;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+/* The way: places in order, the nights in each, and how you get between them */
+.way-sec {
+  padding-top: 2rem;
+}
+.way {
+  display: flex;
+  margin: 0;
+  padding: 0 0 0.25rem;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.city {
+  flex: none;
+  width: 10.5rem;
+}
+.city img,
+.city .noimg {
+  display: block;
+  width: 100%;
+  height: 6.5rem;
+  border-radius: 12px;
+  background: var(--ground);
+  object-fit: cover;
+}
+.city b {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.975rem;
+}
+.city span {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.way .hop {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  width: 5.25rem;
+  height: 6.5rem;
+  padding: 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: center;
+}
+.way .hop .i {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+/* What to do before leaving, by when: the part a traveller forgets */
+.musts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 0.75rem;
+}
+.must {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: var(--round);
+  background: var(--ground);
+}
+.must .ico {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--accent);
+}
+.must .ico .i {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.must b {
+  display: block;
+  font-size: 0.975rem;
+  line-height: 1.35;
+}
+.must p {
+  margin: 0.2rem 0 0;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.must-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+}
+.when {
+  padding: 0.1rem 0.5rem;
+  border-radius: 6px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+/* A thing that stands on its own — the flights — is a card: an edge and a corner */
+.panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--round);
+}
+.leg {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  gap: 0.2rem 1rem;
+  align-items: center;
+  padding: 1rem 1.25rem;
+}
+.leg + .leg {
+  border-top: 1px solid var(--line);
+}
+.leg .when {
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.3;
+}
+.leg .when b {
+  display: block;
+  color: var(--fg);
+  font-size: 0.9375rem;
+}
+.hop2 {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  min-width: 0;
+}
+.hop2 .end b {
+  display: block;
+  white-space: nowrap;
+  font-size: 1.5rem;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.hop2 .end span {
+  color: var(--muted);
+  font: 400 12px / 1.5 var(--sh-mono);
+}
+.hop2 .line {
+  flex: 1;
+  min-width: 2.5rem;
+  overflow: hidden;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font: 400 11.5px / 1.5 var(--sh-mono);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leg .who {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  text-align: right;
+}
+.price {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.panel-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--line);
+  background: var(--ground);
+  font-size: 0.875rem;
+}
+
+/* A card: a stay, a place beside the plan — its picture over its words */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--round);
+}
+.card .ph {
+  aspect-ratio: 3 / 2;
+}
+.card .body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.95rem 1rem 1rem;
+}
+.card .kind {
+  color: var(--muted);
+  font: 400 12px / 1.5 var(--sh-mono);
+}
+.card h3 {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+.card p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.card .line {
+  color: var(--fg);
+}
+.card .near {
+  flex: 1;
+  align-content: end;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.card .actions {
+  margin-top: 0.5rem;
+}
+
+/* Weather, one pill a day */
+.weather {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  background: var(--ground);
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+}
+.pill b {
+  color: var(--muted);
+  font: 400 12px / 1.6 var(--sh-mono);
+  white-space: nowrap;
+}
+
+/* Days: a strip to jump by, then each day as its own chapter */
+.daynav {
+  position: sticky;
+  top: var(--sh-head);
+  z-index: 3;
+  display: flex;
+  gap: 0.375rem;
+  margin: 2.75rem -1rem 0;
+  padding: 0.6rem 1rem;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.daynav a {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 4.5rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 12px;
+  text-decoration: none;
+  line-height: 1.35;
+}
+.daynav a b {
+  font-size: 0.85rem;
+}
+.daynav a span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.daynav a[aria-current] {
+  background: var(--fg);
+  color: var(--bg);
+}
+.daynav a[aria-current] span {
+  color: inherit;
+  opacity: 0.7;
+}
+.day {
+  padding-top: 2.25rem;
+  scroll-margin-top: calc(var(--sh-head) + 4rem);
+}
+.day > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.day .k {
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.day h3 {
+  margin: 0.125rem 0 0;
+  font-size: clamp(1.4rem, 3vw, 1.7rem);
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.dayline {
+  margin: 0.5rem 0 0;
+  color: var(--ink-2);
+  max-width: 44em;
+}
+.daycover {
+  margin-top: 1rem;
+}
+.daycover .ph {
+  aspect-ratio: 21 / 9;
+  border-radius: var(--round);
+}
+.stops {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A place: pictures first, then what to do there, what to watch for, what it costs */
+.place {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+.place.bare {
+  grid-template-columns: minmax(0, 1fr);
+}
+.place.bare .pbody {
+  max-width: 44rem;
+}
+.gallery {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 6px;
+  height: 19rem;
+  overflow: hidden;
+  border-radius: var(--round);
+}
+.gallery .ph:first-child {
+  grid-row: 1 / 3;
+}
+.gallery .ph:nth-child(n + 4) {
+  display: none;
+}
+.gallery.n1 {
+  grid-template-columns: 1fr;
+}
+.gallery.n2 {
+  grid-template-columns: 1fr 1fr;
+}
+.gallery.n2 .ph:nth-child(2) {
+  grid-row: 1 / 3;
+}
+.more-n {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 92%);
+  color: #111;
+  font-size: 12px;
+  font-weight: 650;
+  pointer-events: none;
+}
+.pbody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.ptop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.ptime {
+  color: var(--accent);
+  font: 600 13px / 1.4 var(--sh-mono);
+}
+.pbody h4 {
+  margin: 0.125rem 0 0;
+  font-size: 1.3rem;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+.pbody .price {
+  flex: none;
+  text-align: right;
+}
+.pbody .price b {
+  display: block;
+  font-size: 1.125rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.pbody .price span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+.why {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+.see {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.see li {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  gap: 0.5rem;
+  font-size: 0.925rem;
+  line-height: 1.5;
+}
+.see .i {
+  margin-top: 0.2rem;
+  color: var(--accent);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 8px;
+  background: var(--ground);
+  color: var(--ink-2);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.chip.book {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 550;
+}
+.watch {
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.watch .i {
+  margin-top: 0.15rem;
+}
+.tip {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  background: var(--ground);
+  color: var(--ink-2);
+  font-size: 0.85rem;
+}
+.tip b {
+  margin-right: 0.25rem;
+  color: var(--fg);
+  font-weight: 650;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.btn,
+a[href^="https://www.google.com/maps/dir/"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+  padding: 0 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.85rem;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn.primary {
+  border-color: transparent;
+  background: var(--fg);
+  color: var(--bg);
+}
+.btn:hover {
+  background: var(--ground);
+}
+.btn.primary:hover {
+  background: color-mix(in srgb, var(--fg) 85%, var(--bg));
+}
+/* A map link carries a pin; the day's route a route */
+a[href^="https://www.google.com/maps"]::before {
+  content: "";
+  flex: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  background: currentColor;
+  mask:
+    center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z'/%3E%3Ccircle cx='12' cy='9.5' r='2.5'/%3E%3C/svg%3E");
+}
+a[href^="https://www.google.com/maps/dir/"]::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='19' r='2.5'/%3E%3Ccircle cx='18' cy='5' r='2.5'/%3E%3Cpath d='M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5'/%3E%3C/svg%3E");
+}
+/* A move between places is a line of its own, not a stop */
+.move {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 1.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px dashed color-mix(in srgb, var(--sh-ink) 18%, var(--sh-paper));
+  border-radius: 12px;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.move .i {
+  color: var(--muted);
+}
+.move b {
+  color: var(--fg);
+}
+.day > footer {
+  padding-top: 1.25rem;
+}
+
+/* The costs in full: rows with a hairline between, the total in weight */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+td {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+td.num {
+  padding-left: 1rem;
+  text-align: right;
+  white-space: nowrap;
+}
+td small {
+  display: block;
+}
+tr.total td {
+  border-bottom: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+tr.total td.num {
+  color: var(--accent);
+}
+
+/* Good to know: properties, an icon and a name beside each */
+.props {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 2rem;
+  margin: 0;
+}
+.props > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9.5rem) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.props dt {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.props dt .i {
+  margin-top: 0.15rem;
+}
+.props dd {
+  margin: 0;
+  font-size: 0.925rem;
+  line-height: 1.55;
+}
+h3.sub {
+  margin: 2rem 0 0.625rem;
+  font-size: 1.0625rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.to-book {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.to-book label {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 10px;
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+.to-book label:hover {
+  background: var(--ground);
+}
+.to-book input {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  margin: 0;
+  accent-color: var(--sh-maker);
+}
+.to-book small {
+  font: 400 12px / 1.4 var(--sh-mono);
+  text-align: right;
+}
+.to-book input:checked + span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* The notes: folded, their count on the fold */
+.notes {
+  margin-top: 2.5rem;
+  border-radius: var(--round);
+  background: var(--ground);
+}
+.notes summary {
+  padding: 0.9rem 1rem;
+  cursor: pointer;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.notes summary span {
+  margin-left: 0.25rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+.notes ul {
+  margin: 0;
+  padding: 0 1rem 1rem 2.1rem;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+.notes li + li {
+  margin-top: 0.375rem;
+}
+.sources {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.sources a {
+  color: inherit;
+}
+
+/* The viewer: one picture as large as the screen allows, who made it under it */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr) 3.5rem;
+  align-items: center;
+  background: rgb(0 0 0 / 92%);
+  color: #fff;
+}
+.viewer[hidden] {
+  display: none;
+}
+.viewer figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  min-width: 0;
+}
+.viewer img {
+  max-width: 100%;
+  max-height: calc(100vh - 7rem);
+  border-radius: 6px;
+  object-fit: contain;
+}
+.viewer figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem 0.75rem;
+  padding: 0 1rem;
+  font-size: 0.875rem;
+  text-align: center;
+}
+.viewer figcaption span {
+  color: rgb(255 255 255 / 65%);
+  font-size: 0.8125rem;
+}
+.viewer button {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: auto;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 12%);
+  color: #fff;
+  font: 400 1.75rem / 1 var(--sh-font);
+  cursor: pointer;
+}
+.viewer button:hover,
+.viewer button:focus-visible {
+  background: rgb(255 255 255 / 24%);
+  outline: none;
+}
+.viewer .v-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  margin: 0;
+}
+
+@media (max-width: 56rem) {
+  .head {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+  .money {
+    position: static;
+  }
+  .place {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+  }
+  .props {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 40rem) {
+  /* The hero and each gallery run off the edge, to be swiped */
+  .hero,
+  .gallery {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .hero {
+    height: 17rem;
+    margin-inline: -1rem;
+    border-radius: 0;
+  }
+  .hero .ph {
+    flex: none;
+    width: 88%;
+    scroll-snap-align: start;
+  }
+  .gallery {
+    height: 14rem;
+    margin-right: -1rem;
+    border-radius: 14px 0 0 14px;
+  }
+  .gallery .ph {
+    flex: none;
+    width: 82%;
+    border-radius: 12px;
+    scroll-snap-align: start;
+  }
+  .gallery .ph:nth-child(n + 4) {
+    display: block;
+  }
+  .gallery.n1 .ph {
+    width: calc(100% - 1rem);
+  }
+  .more-n {
+    display: none;
+  }
+  .leg {
+    grid-template-columns: 1fr auto;
+    padding: 0.875rem 1rem;
+  }
+  .leg .when {
+    grid-column: 1 / -1;
+  }
+  .leg .when b {
+    display: inline;
+    margin-right: 0.4rem;
+  }
+  .musts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .props > div {
+    grid-template-columns: 7rem minmax(0, 1fr);
+  }
+  .to-book label {
+    grid-template-columns: 1.25rem minmax(0, 1fr);
+  }
+  .to-book small {
+    grid-column: 2;
+    text-align: left;
+  }
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .viewer .v-prev,
+  .viewer .v-next {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ph img {
+    transition: none;
+  }
+}
+@media print {
+  .viewer,
+  .hero .all,
+  .daynav {
+    display: none !important;
+  }
+  .money {
+    position: static;
+    box-shadow: none;
+  }
+  .place,
+  .must,
+  .card,
+  .props > div {
+    break-inside: avoid;
+  }
+  .day > header {
+    break-after: avoid;
+  }
+  .fact,
+  .must,
+  .chip,
+  .watch,
+  .tip,
+  .when,
+  .bar i,
+  .dot,
+  .notes {
+    print-color-adjust: exact;
+  }
+}

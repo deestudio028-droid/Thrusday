@@ -1,0 +1,523 @@
+/* The shell a bot's page wears when it is opened: one head for a deck, a document and a
+   canvas, the buttons and menus on it, and the theme under all of it. Put on each file
+   by the skill's own script (shell/wear.mjs), so the file still opens alone. The look is
+   the app's own: its radius, a border that is the ink at low opacity, a picked thing in
+   the one brand blue, black for what is pressed.
+
+   Everything here is named `sh-` — classes and custom properties alike — because the
+   page is shared with what a bot writes into it, and a bot that names its own `--ink` or
+   `.rule` must neither restyle the head nor be restyled by it. */
+
+/* Theme. The device decides unless the reader picked one (the theme button, kept in the
+   browser); `data-theme` on <html> is set before the first paint (shell/theme.js). The
+   values are the app's own (app/globals.css): its grey ladder read from either end, its
+   blue, its red, a border that is the ink at 10%, muted text that clears 4.5:1. */
+:root {
+  color-scheme: light dark;
+  /* The type of every page's own words, until a kind sets its own: the app's own Geist for
+     Latin letters, carried in the page (wear.mjs, fonts/), so it opens offline looking as
+     the app does. No face is named for Chinese, Japanese or Korean, nor for any script
+     Geist does not draw: the page's lang, else the reader's system, picks the one that
+     script needs, where a named one drew all three in one country's letterforms. */
+  --sh-font:
+    "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sh-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* The colour of the bot that made the page, taken from its face (wear.mjs): a kind's
+     one accent, so a page says whose it is. Ink when no bot made it, or its face is not
+     one colour. */
+  --sh-maker: var(--sh-ink);
+  /* The same colour as words wear it, at 4.5:1 on the page's ground (wear.mjs) */
+  --sh-maker-text: var(--sh-ink);
+  --sh-paper: #ffffff;
+  --sh-ink: #0d0d0d;
+  --sh-ink-2: #4f4f4f;
+  --sh-ink-3: #767676;
+  --sh-line: rgb(13 13 13 / 10%);
+  --sh-soft: #f9f9f9;
+  --sh-sunk: #ededed;
+  --sh-brand: #0169cc;
+  --sh-bad: #dc2626;
+  --sh-good: #15803d;
+  --sh-warn: #b45309;
+  --sh-dot: #cdcdcd;
+  --sh-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 10px 30px -14px rgb(0 0 0 / 30%);
+  --sh-brand-soft: color-mix(in srgb, var(--sh-brand) 9%, var(--sh-paper));
+  --sh-radius: 0.625rem;
+  --sh-head: 48px;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sh-paper: #0d0d0d;
+    --sh-ink: #ffffff;
+    --sh-ink-2: #b9b9b9;
+    --sh-ink-3: #9f9f9f;
+    --sh-line: rgb(255 255 255 / 10%);
+    --sh-soft: #131313;
+    --sh-sunk: #1c1c1c;
+    --sh-brand: #0a84ff;
+    --sh-bad: #ef4444;
+    --sh-good: #4ade80;
+    --sh-warn: #fbbf24;
+    --sh-dot: #393939;
+    --sh-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px -14px rgb(0 0 0 / 70%);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --sh-paper: #0d0d0d;
+  --sh-ink: #ffffff;
+  --sh-ink-2: #b9b9b9;
+  --sh-ink-3: #9f9f9f;
+  --sh-line: rgb(255 255 255 / 10%);
+  --sh-soft: #131313;
+  --sh-sunk: #1c1c1c;
+  --sh-brand: #0a84ff;
+  --sh-bad: #ef4444;
+  --sh-good: #4ade80;
+  --sh-warn: #fbbf24;
+  --sh-dot: #393939;
+  --sh-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px -14px rgb(0 0 0 / 70%);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--sh-paper);
+  color: var(--sh-ink);
+  font: 14px / 1.5 var(--sh-font);
+  -webkit-text-size-adjust: 100%;
+  text-wrap: pretty;
+}
+
+/* Who made it, at the end of what is read, in the flow of the page: the maker's face and
+   name, and the words after it. A page made outside a bot's job names nobody and shows
+   none. */
+.sh-sign {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 3rem 1rem 3.5rem;
+  /* Not the muted grey: that clears 4.5:1 on white paper only, and a sign may end a grey ground */
+  color: var(--sh-ink-2);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.sh-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  color: var(--sh-ink);
+}
+.sh-by .sh-mark {
+  width: 18px;
+  height: 18px;
+}
+.sh-by b {
+  font-weight: 600;
+}
+.sh-sign a {
+  color: inherit;
+  text-decoration-color: var(--sh-line);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.sh-sign a:hover {
+  color: var(--sh-ink);
+  text-decoration-color: currentcolor;
+}
+.sh-sign[data-bot=""] {
+  display: none;
+}
+
+/* The head: who made it, what it is, what it can do, the theme, export. The kind's own
+   controls go in .sh-tools; the two every kind has close the row, so they are always in
+   the same corner whatever was opened. It stays at the top of a page that scrolls. */
+.sh-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--sh-head);
+  padding: 0 0.625rem 0 0.875rem;
+  border-bottom: 1px solid var(--sh-line);
+  background: var(--sh-paper);
+  color: var(--sh-ink);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.sh-who {
+  display: flex;
+  align-items: center;
+  gap: 0.4375rem;
+  font-weight: 600;
+}
+.sh-mark {
+  flex: none;
+}
+.sh-who[data-bot=""],
+.sh-who[data-bot=""] + .sh-dot {
+  display: none;
+}
+.sh-dot {
+  flex: none;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--sh-ink-3);
+}
+.sh-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.sh-sub {
+  flex: none;
+  color: var(--sh-ink-3);
+  font-size: 11.5px;
+}
+.sh-sub:empty {
+  display: none;
+}
+/* A line that says the page's words are not where the reader would think: kept in view */
+.sh-sub[data-warn] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--sh-warn);
+  font-weight: 500;
+}
+.sh-gap {
+  flex: 1;
+}
+.sh-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.sh-count {
+  padding: 0 0.25rem;
+  color: var(--sh-ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.sh-count b {
+  color: var(--sh-ink);
+  font-weight: 600;
+}
+.sh-rule {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 0.125rem;
+  background: var(--sh-line);
+}
+@media (max-width: 720px) {
+  .sh-head .sh-sub:not([data-warn]),
+  .sh-head .sh-word {
+    display: none;
+  }
+}
+/* On a phone the head's tools leave room for one name: the page's. Who made it keeps its
+   face, so the page still says whose it is. */
+@media (max-width: 480px) {
+  .sh-head .sh-who b,
+  .sh-head .sh-who + .sh-dot {
+    display: none;
+  }
+}
+
+/* A button: ghost unless it says otherwise. `sh-outline` has an edge, `sh-on` is what is
+   picked, `sh-icon` is square, `sh-sm` is the small one. */
+.sh-b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 32px;
+  min-width: 32px;
+  margin: 0;
+  padding: 0 0.5rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--sh-radius) * 0.8);
+  background: transparent;
+  color: var(--sh-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.sh-b:hover {
+  background: var(--sh-soft);
+  color: var(--sh-ink);
+}
+.sh-b:focus-visible {
+  outline: 2px solid var(--sh-brand);
+  outline-offset: 1px;
+}
+.sh-b.sh-icon {
+  width: 32px;
+  padding: 0;
+}
+.sh-b.sh-sm {
+  height: 28px;
+  min-width: 28px;
+  font-size: 12px;
+}
+.sh-b.sh-sm.sh-icon {
+  width: 28px;
+}
+.sh-b.sh-outline {
+  border-color: var(--sh-line);
+  background: var(--sh-paper);
+  color: var(--sh-ink);
+}
+.sh-b.sh-outline:hover {
+  background: var(--sh-soft);
+}
+.sh-b.sh-on {
+  border-color: var(--sh-brand);
+  background: var(--sh-brand-soft);
+  color: var(--sh-brand);
+}
+.sh-b[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.sh-b[hidden] {
+  display: none;
+}
+.sh-b svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The theme button draws the mode it is in: the device, light, dark. */
+.sh-theme svg {
+  display: none;
+}
+:root:not([data-theme]) .sh-theme .sh-mode-device,
+:root[data-theme="light"] .sh-theme .sh-mode-light,
+:root[data-theme="dark"] .sh-theme .sh-mode-dark {
+  display: block;
+}
+
+/* A menu: a <details> whose summary is a button and whose list drops under it. The
+   page's own rules for details and lists may reach in here, so the box is said again. */
+.sh-menu {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.sh-menu > summary {
+  margin: 0;
+  list-style: none;
+}
+.sh-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.sh-menu > summary .sh-chev {
+  width: 14px;
+  height: 14px;
+  margin-left: -0.125rem;
+  opacity: 0.7;
+}
+.sh-menu[open] > summary {
+  background: var(--sh-soft);
+}
+.sh-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 200px;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--sh-line);
+  border-radius: var(--sh-radius);
+  background: var(--sh-paper);
+  color: var(--sh-ink);
+  box-shadow: var(--sh-shadow);
+}
+.sh-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.4375rem 0.5rem;
+  border: 0;
+  border-radius: calc(var(--sh-radius) * 0.6);
+  background: transparent;
+  color: var(--sh-ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.sh-item:hover,
+.sh-item:focus-visible {
+  background: var(--sh-soft);
+  outline: 0;
+}
+.sh-item[hidden] {
+  display: none;
+}
+.sh-item small {
+  margin-left: auto;
+  color: var(--sh-ink-3);
+  font-size: 11px;
+}
+.sh-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--sh-line);
+}
+
+/* A side pane and the small heading each starts with. */
+.sh-pane {
+  flex: none;
+  border-right: 1px solid var(--sh-line);
+  background: var(--sh-soft);
+  color: var(--sh-ink);
+  overflow: auto;
+}
+.sh-pane.sh-right {
+  border-right: 0;
+  border-left: 1px solid var(--sh-line);
+}
+.sh-pane-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem;
+  margin: 0 0 0.5rem;
+  padding: 0 0.375rem;
+  /* Not the muted grey: that clears 4.5:1 on white paper only, and a pane is tinted */
+  color: var(--sh-ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.03em;
+}
+.sh-pane-h em {
+  font-style: normal;
+  font-weight: 400;
+}
+
+/* A miniature of a slide or a board: the thing itself, cloned and scaled into a box. */
+.sh-thumb {
+  position: relative;
+  display: block;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--sh-line);
+  border-radius: calc(var(--sh-radius) * 0.7);
+  background: var(--sh-sunk);
+}
+.sh-thumb-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.sh-thumb-stage * {
+  animation: none !important;
+}
+
+/* A word that says something failed, as the app says it: red, and only there. */
+.sh-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--sh-bad);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+}
+.sh-badge[hidden] {
+  display: none;
+}
+
+/* A page drawn as its own face, in a file's tile (`?face`, shell/theme.js): what it holds
+   and nothing of the frame it is opened in. Each kind hides its own parts too. */
+.sh-face .sh-head,
+.sh-face .sh-pane,
+.sh-face .sh-sign {
+  display: none !important;
+}
+
+/* Paper is paper: printing is always light, and the shell is not on it. The selectors
+   match the dark ones exactly, so being later is what wins. */
+@media print {
+  :root,
+  :root:not([data-theme="light"]),
+  :root[data-theme="dark"] {
+    --sh-paper: #ffffff;
+    --sh-ink: #0d0d0d;
+    --sh-ink-2: #4f4f4f;
+    --sh-ink-3: #767676;
+    --sh-line: rgb(13 13 13 / 10%);
+    --sh-soft: #f9f9f9;
+    --sh-sunk: #ededed;
+    --sh-brand: #0169cc;
+    --sh-good: #15803d;
+    --sh-warn: #b45309;
+    --sh-bad: #dc2626;
+  }
+  .sh-head,
+  .sh-pane,
+  .sh-menu {
+    display: none !important;
+  }
+  /* A heading stays with what it heads, a picture is not cut across two sheets, and the
+     maker's name is not left alone on the last one */
+  :is(h1, h2, h3, h4) {
+    break-after: avoid;
+  }
+  img,
+  figure {
+    break-inside: avoid;
+  }
+  .sh-sign {
+    break-before: avoid;
+  }
+}
+/* A sheet's own margin, so a page printed or sent as a PDF (features/reach/pictures) does
+   not run to its edges; a deck's slide fills its sheet and sets none (deck.css, later) */
+@page {
+  margin: 14mm 12mm;
+}

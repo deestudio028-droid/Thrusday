@@ -1,0 +1,1 @@
+ALTER TABLE `thread` ADD `started_by` text;

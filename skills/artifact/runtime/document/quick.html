@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{shell.meta}}
+<meta name="print" content="pdf">
+<title>{{title}}</title>
+<script>
+// shell.theme
+</script>
+<style>
+/* shell.css */
+{{css}}
+</style>
+</head>
+<body>
+<header class="sh-head">
+  {{shell.who}}
+  <span class="sh-title">{{title}}</span>
+  <span class="sh-sub" id="state"></span>
+  <span class="sh-gap"></span>
+  <span class="sh-tools">
+    <button type="button" class="sh-b sh-outline" data-reload title="Show the page as it is now, with your edits beside it" hidden>Load new version</button>
+    <button type="button" class="sh-b sh-outline" data-discard title="Throw away the edits this browser keeps, and show the file as it is" hidden>Discard edits</button>
+    <button type="button" class="sh-b sh-icon" data-toc aria-label="Contents" title="Contents" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+    </button>
+  </span>
+  <i class="sh-rule"></i>
+  {{shell.theme}}
+  <details class="sh-menu">
+    {{shell.export}}
+    <div class="sh-list">
+      <button type="button" class="sh-item" data-docx>Word file<small>.docx</small></button>
+      <button type="button" class="sh-item" data-export="print">Print<small>PDF</small></button>
+      {{shell.download}}
+    </div>
+  </details>
+</header>
+
+<div class="pg-page">
+  <nav class="sh-pane pg-toc" id="toc" aria-label="Contents"></nav>
+  <div class="pg-read">
+    <div class="pg-kept-list" id="kept" hidden></div>
+    <main class="pg-paper" id="paper">
+<!-- put: start -->
+{{body}}
+<!-- put: end -->
+    </main>
+    {{shell.sign}}
+  </div>
+</div>
+
+<div class="pg-grip" id="grip" hidden>
+  <button type="button" class="sh-b sh-sm sh-icon" data-block-menu aria-label="This block" title="Move, copy or delete"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.4" fill="currentcolor" stroke="none"/><circle cx="15" cy="6" r="1.4" fill="currentcolor" stroke="none"/><circle cx="9" cy="12" r="1.4" fill="currentcolor" stroke="none"/><circle cx="15" cy="12" r="1.4" fill="currentcolor" stroke="none"/><circle cx="9" cy="18" r="1.4" fill="currentcolor" stroke="none"/><circle cx="15" cy="18" r="1.4" fill="currentcolor" stroke="none"/></svg></button>
+  <button type="button" class="sh-b sh-sm sh-icon" data-insert-menu aria-label="Put something after it" title="Put something after it"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+</div>
+<div class="pg-bubble" id="bubble" hidden>
+  <button type="button" class="sh-b sh-sm" data-fmt="h2" title="Heading"><b>H2</b></button>
+  <button type="button" class="sh-b sh-sm" data-fmt="p" title="Paragraph">¶</button>
+  <button type="button" class="sh-b sh-sm" data-fmt="bold" title="Bold"><b>B</b></button>
+  <button type="button" class="sh-b sh-sm" data-fmt="italic" title="Italic"><i>I</i></button>
+  <button type="button" class="sh-b sh-sm sh-icon" data-fmt="link" aria-label="Link" title="Link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 0 0-5.7-5.7L11 6.3"/><path d="M14 11a4 4 0 0 0-5.7 0l-2.6 2.6a4 4 0 0 0 5.7 5.7L13 17.7"/></svg></button>
+  <i class="sh-rule"></i>
+  <button type="button" class="sh-b sh-sm" data-fmt="chip" title="Make it a chip">chip</button>
+</div>
+<div class="pg-bubble" id="table-bar" hidden>
+  <button type="button" class="sh-b sh-sm" data-table="row" title="A row under this one">+ Row</button>
+  <button type="button" class="sh-b sh-sm" data-table="column" title="A column after this one">+ Column</button>
+  <i class="sh-rule"></i>
+  <button type="button" class="sh-b sh-sm" data-table="drop-row" title="Delete this row">− Row</button>
+  <button type="button" class="sh-b sh-sm" data-table="drop-column" title="Delete this column">− Column</button>
+</div>
+<div class="pg-bubble pg-link" id="link-card" hidden>
+  <span class="pg-link-to"></span>
+  <i class="sh-rule"></i>
+  <button type="button" class="sh-b sh-sm" data-link="open" title="Open the link (or press it with ⌘ or Ctrl)">Open</button>
+  <button type="button" class="sh-b sh-sm" data-link="edit" title="Change where it goes">Edit</button>
+  <button type="button" class="sh-b sh-sm" data-link="remove" title="Keep the words, without the link">Remove</button>
+</div>
+<div class="sh-list pg-popover" id="block-menu" hidden>
+  <button type="button" class="sh-item" data-block="up">Move up</button>
+  <button type="button" class="sh-item" data-block="down">Move down</button>
+  <button type="button" class="sh-item" data-block="dup">Duplicate</button>
+  <div class="sh-sep"></div>
+  <button type="button" class="sh-item" data-block="delete">Delete</button>
+</div>
+<div class="sh-list pg-popover" id="insert-menu" hidden>
+  <button type="button" class="sh-item" data-add="h2">Heading</button>
+  <button type="button" class="sh-item" data-add="p">Paragraph</button>
+  <button type="button" class="sh-item" data-add="ul">Bulleted list</button>
+  <button type="button" class="sh-item" data-add="ol">Numbered list</button>
+  <button type="button" class="sh-item" data-add="check">Checklist</button>
+  <button type="button" class="sh-item" data-add="table">Table</button>
+  <button type="button" class="sh-item" data-add="note">Note</button>
+  <button type="button" class="sh-item" data-add="hr">Divider</button>
+</div>
+
+<script>
+// shell.js
+{{js}}
+</script>
+</body>
+</html>

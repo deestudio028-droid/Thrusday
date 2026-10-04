@@ -1,0 +1,1018 @@
+"use client";
+
+import { formatDistanceToNowStrict } from "date-fns";
+import {
+  ArrowUpRight,
+  AudioLines,
+  Captions,
+  Check,
+  ChevronRight,
+  Clapperboard,
+  Image as ImageIcon,
+  KeyRound,
+  type LucideIcon,
+  Search,
+  TriangleAlert,
+} from "lucide-react";
+import { useState } from "react";
+import { queryKey } from "@/app/api/query-key";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { notify } from "@/components/ui/notify";
+import { SiteIcon } from "@/components/ui/site-icon";
+import { Skeleton } from "@/components/ui/skeleton";
+import { KEY_MIN } from "@/config";
+import { ChatGptSignIn } from "@/features/ai/components/chatgpt-sign-in";
+import { EffortSwitch } from "@/features/ai/components/effort-switch";
+import { ModelPicker } from "@/features/ai/components/model-picker";
+import { ProviderIcon } from "@/features/ai/components/provider-icon";
+import {
+  type AiProvider,
+  type AutomaticModel,
+  effortSchema,
+  isCatalogProvider,
+  type KeyCredits,
+  type MediaKind,
+  parseMediaModel,
+  parseTextModel,
+  planMediaOf,
+  planName,
+  type SubscriptionUsage,
+} from "@/features/ai/model.schema";
+import { BotsMark } from "@/features/bot/components/bot-mark";
+import { useVoiceLine } from "@/features/config/components/voice-key";
+import {
+  removeConfigAction,
+  setConfigAction,
+} from "@/features/config/config.action";
+import {
+  CONFIG_GROUPS,
+  type ConfigChoice,
+  type ConfigEntry,
+  type ConfigGroup,
+  type ConfigStatus,
+  DEFAULT_EFFORT_KEY,
+  EXA_API_KEY,
+  envWords,
+  groupSatisfied,
+  isConfigFromEnv,
+  isConfigSet,
+  isConfigUnreadable,
+  lostWords,
+  VOICE_GROUP_ID,
+} from "@/features/config/config.const";
+import { ReachGuide } from "@/features/reach/components/reach-guide";
+import {
+  SettingDialogContent,
+  SettingError,
+  SettingGroup,
+  SettingItems,
+  SettingNote,
+  SettingRailNote,
+  SettingScreen,
+  SettingSkeleton,
+} from "@/features/settings/components/setting-ui";
+import { useServerAction } from "@/lib/protocol/use-server-action";
+import { revalidate, useServerRoute } from "@/lib/protocol/use-server-route";
+import { cn, WAITING_INK } from "@/lib/utils";
+
+/** A key that is not a provider's still wears a mark, or its row is a hole in the column. */
+const KEY_MARKS: Record<string, LucideIcon> = { [EXA_API_KEY]: Search };
+
+/** One mark per studio kind, drawn as the output (transcription is captions, not a mic). */
+const KIND_MARKS: Record<MediaKind, LucideIcon> = {
+  image: ImageIcon,
+  video: Clapperboard,
+  speech: AudioLines,
+  transcription: Captions,
+};
+
+/**
+ * One screen per subject, each a list of the catalogue's groups in reading order: the
+ * accounts (the voice key, the two easy ways as cards, every other provider as a mark to
+ * tap, search), and what runs on them. Phone is its own screen, below.
+ */
+const SCREENS = {
+  keys: ["voice", "easy", "text", "search"],
+  models: ["bots", "studio"],
+} as const satisfies Record<string, readonly ConfigGroup["id"][]>;
+
+export const KeysSetting = () => <ConfigScreen screen="keys" />;
+export const ModelsSetting = () => <ConfigScreen screen="models" />;
+
+/**
+ * Phone is no list of keys: each token is set inside the step that asks for it, so the whole
+ * screen is `reach-guide`. Its keys stay in the catalogue — that is the write action's allow
+ * list — they are simply not drawn as rows here.
+ */
+export const PhoneSetting = () => (
+  <SettingScreen
+    footer={
+      <SettingRailNote>
+        Nothing on this computer is opened to the internet: the app asks the
+        chat service, or her mailbox, what was written.
+      </SettingRailNote>
+    }
+  >
+    <ReachGuide />
+  </SettingScreen>
+);
+
+/** Reads set/unset only, never a value. */
+function ConfigScreen({ screen }: { screen: keyof typeof SCREENS }) {
+  const { data, isLoading, error } = useServerRoute<ConfigStatus[]>(
+    queryKey.config,
+  );
+  const voice = useVoiceLine();
+
+  if (isLoading) return <SettingSkeleton rows={4} />;
+  if (error) return <SettingError message={error.message} />;
+
+  const isSet = (key: string) => isConfigSet(data, key);
+  const isLost = (key: string) => isConfigUnreadable(data, key);
+  const isEnv = (key: string) => isConfigFromEnv(data, key);
+  // A group is met by what can use it: the voice group by a sign-in on a plan with calls
+  const meets = (group: ConfigGroup) =>
+    groupSatisfied(
+      group,
+      group.id === VOICE_GROUP_ID ? voice.countsForCall : isSet,
+    );
+  // Only choice entries carry a value
+  const valueOf = (key: string) =>
+    data?.find((entry) => entry.key === key)?.value;
+
+  const groups = SCREENS[screen].flatMap(
+    (id) => CONFIG_GROUPS.find((group) => group.id === id) ?? [],
+  );
+  const keys = groups
+    .filter((group) => group.section === "keys")
+    .flatMap((group) => group.entries);
+  const lost = keys.filter((entry) => isLost(entry.key)).length;
+
+  return (
+    <SettingScreen
+      footer={
+        <SettingRailNote>
+          {screen === "models"
+            ? "Her own voice and backend models are in Thursday. A bot can pick its own on its page."
+            : `${keys.filter((entry) => isSet(entry.key)).length} of ${keys.length} set${
+                lost ? ` · ${lost} to enter again` : ""
+              }${
+                groups.some((group) => !meets(group))
+                  ? " · a call needs the GPT Subscription or an OpenAI key"
+                  : " · your keys stay on this machine"
+              }`}
+        </SettingRailNote>
+      }
+    >
+      {groups.map((group) => (
+        <SettingGroup
+          key={group.id}
+          label={group.title}
+          hint={group.hint}
+          right={<RequirementBadge group={group} met={meets(group)} />}
+        >
+          {group.id === "easy" ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {group.entries.map((entry) => (
+                <KeyRow
+                  key={entry.key}
+                  card
+                  entry={entry}
+                  set={isSet(entry.key)}
+                  lost={isLost(entry.key)}
+                  env={isEnv(entry.key)}
+                />
+              ))}
+            </div>
+          ) : group.id === "text" ? (
+            <div className="flex flex-wrap gap-x-1.5 gap-y-3.5">
+              {group.entries.map((entry) => (
+                <KeyTile
+                  key={entry.key}
+                  entry={entry}
+                  set={isSet(entry.key)}
+                  lost={isLost(entry.key)}
+                  env={isEnv(entry.key)}
+                />
+              ))}
+            </div>
+          ) : (
+            <SettingItems>
+              {group.entries.map((entry) =>
+                entry.effortOf ? null : entry.choices ? (
+                  <ChoiceRow
+                    key={entry.key}
+                    entry={entry}
+                    choices={entry.choices}
+                    value={valueOf(entry.key)}
+                    effort={effortEntryOf(group, entry.key)}
+                    effortValue={valueOf(DEFAULT_EFFORT_KEY)}
+                  />
+                ) : (
+                  <KeyRow
+                    key={entry.key}
+                    entry={entry}
+                    set={isSet(entry.key)}
+                    lost={isLost(entry.key)}
+                    env={isEnv(entry.key)}
+                  />
+                ),
+              )}
+            </SettingItems>
+          )}
+        </SettingGroup>
+      ))}
+    </SettingScreen>
+  );
+}
+
+/**
+ * One provider's key as its mark: tap it, paste the key. A key that is set wears a check; one
+ * saved but no longer readable (config.const ConfigStatus `unreadable`), the waiting mark. One
+ * the environment sets says so under its name, since its dialog cannot change it.
+ */
+function KeyTile({
+  entry,
+  set,
+  lost,
+  env,
+}: {
+  entry: ConfigEntry;
+  set: boolean;
+  lost: boolean;
+  /** Set in the environment (config.const ConfigStatus `env`). */
+  env: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => openConfigDialog(entry, set)}
+      aria-label={`${entry.label}: ${env ? "set in env" : set ? "set" : lost ? "enter it again" : "not set"}`}
+      className="group flex w-17 flex-col items-center gap-1.5 rounded-xl py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <span className="relative grid size-10.5 place-items-center rounded-[13px] bg-muted/60 transition-colors group-hover:bg-muted">
+        <KeyMark entry={entry} />
+        {set ? (
+          <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-primary text-primary-foreground ring-2 ring-background">
+            <Check className="size-2.5" />
+          </span>
+        ) : (
+          lost && (
+            <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-waiting text-background ring-2 ring-background">
+              <TriangleAlert className="size-2.5" />
+            </span>
+          )
+        )}
+      </span>
+      <span
+        className={cn(
+          "max-w-full truncate text-[11px]",
+          set ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {entry.label}
+      </span>
+      {env && (
+        <span className="-mt-1.5 font-mono text-[10px] text-muted-foreground">
+          env
+        </span>
+      )}
+    </button>
+  );
+}
+
+function RequirementBadge({
+  group,
+  met,
+}: {
+  group: ConfigGroup;
+  met: boolean;
+}) {
+  if (group.require === "none") return null;
+  if (met) {
+    return (
+      <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+        <Check className="size-3" />
+        ready
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "flex items-center gap-1 font-mono text-[11px]",
+        WAITING_INK,
+      )}
+    >
+      <TriangleAlert className="size-3" />
+      {group.note ?? "Required"}
+    </span>
+  );
+}
+
+function KeyRow({
+  entry,
+  set,
+  lost,
+  env,
+  card = false,
+  narrow = false,
+}: {
+  entry: ConfigEntry;
+  set: boolean;
+  /** Saved, but no longer readable: asked for again (config.const ConfigStatus `unreadable`). */
+  lost: boolean;
+  /** Set in the environment (config.const ConfigStatus `env`): said at the row's end. */
+  env: boolean;
+  /** Drawn as a card of its own rather than a row in a list. */
+  card?: boolean;
+  /** In a narrow column the state takes the second line, where the key's name is of no use. */
+  narrow?: boolean;
+}) {
+  const credits = useKeyCredits(entry, set);
+  const usage = useSubscriptionUsage(entry, set);
+  const plan = useSignInPlan(entry, set);
+  // A plan's use keeps the row as it is, narrow as the card is; its dialog says where it is set
+  const state = usage.data
+    ? usageState(usage.data)
+    : keyState(set, credits.data, entry.signIn, lost, env);
+
+  const waiting = credits.isLoading || usage.isLoading;
+  const stateLine = (
+    <span
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 font-mono text-xs",
+        state.ink,
+      )}
+    >
+      {state.warn ? (
+        <TriangleAlert className="size-3" />
+      ) : (
+        set && <Check className="size-3" />
+      )}
+      {state.text}
+    </span>
+  );
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        entry.signIn ? openSignInDialog(entry) : openConfigDialog(entry, set)
+      }
+      className={cn(
+        "group flex w-full items-center gap-3 p-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset",
+        card && "rounded-xl border border-border/60",
+      )}
+    >
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/60">
+        <KeyMark entry={entry} />
+      </span>
+      <span className="min-w-0 flex-1 space-y-0.5">
+        <span className="flex items-center gap-2 truncate text-sm font-medium">
+          {entry.label}
+          {entry.signIn && set && <PlanBadge usage={usage.data} plan={plan} />}
+        </span>
+        {narrow ? (
+          waiting ? (
+            <Skeleton className="h-3 w-20" />
+          ) : (
+            stateLine
+          )
+        ) : (
+          <span className="block truncate font-mono text-xs text-muted-foreground">
+            {/* A sign-in's config key is nothing to read; how much of its plan is left is */}
+            {entry.signIn
+              ? set
+                ? (resetLine(usage.data) ?? "signed in")
+                : "sign in with your account"
+              : entry.key}
+          </span>
+        )}
+        {entry.signIn && set && usage.data && <UsageBar usage={usage.data} />}
+      </span>
+
+      {narrow ? null : waiting ? (
+        // Only this end waits, so the row keeps its shape while the catalog provider or the plan answers
+        <Skeleton className="h-3 w-20 shrink-0" />
+      ) : (
+        stateLine
+      )}
+
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground/60 transition-colors group-hover:text-foreground" />
+    </button>
+  );
+}
+
+/** US dollars, as the gateway and OpenRouter bill. */
+const USD = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
+
+/**
+ * What a key says at the end of its row. A key only knows whether it is set, except a catalog
+ * provider's, which also says what is left on it: the waiting colour for a top-up, red is a refusal.
+ */
+function keyState(
+  set: boolean,
+  credits: KeyCredits | null | undefined,
+  signIn?: true,
+  lost = false,
+  env = false,
+): { text: string; ink: string; warn: boolean } {
+  const state = keyStateText(set, credits, signIn, lost);
+  return set ? envState(state, env, Boolean(credits)) : state;
+}
+
+/**
+ * Where a key is set, said at its row's end since its dialog cannot change it (config.const
+ * envWords): beside the credit it has left, else in place of "Set".
+ */
+function envState(
+  state: { text: string; ink: string; warn: boolean },
+  env: boolean,
+  figure: boolean,
+): { text: string; ink: string; warn: boolean } {
+  if (!env) return state;
+  return figure
+    ? { ...state, text: `${state.text} · env` }
+    : { ...state, text: "Set in env" };
+}
+
+function keyStateText(
+  set: boolean,
+  credits: KeyCredits | null | undefined,
+  signIn?: true,
+  lost = false,
+): { text: string; ink: string; warn: boolean } {
+  // Saved once and no longer readable: the user has to give it again, whichever group it is in
+  if (!set && lost)
+    return {
+      text: signIn ? "Sign in again" : "Enter again",
+      ink: WAITING_INK,
+      warn: true,
+    };
+  // An unmet voice group says so at its head, since the sign-in in another group meets it too
+  if (!set)
+    return {
+      text: signIn ? "Signed out" : "Not set",
+      ink: "text-muted-foreground",
+      warn: false,
+    };
+  if (!credits)
+    return {
+      text: signIn ? "Signed in" : "Set",
+      ink: "text-muted-foreground",
+      warn: false,
+    };
+  if ("refused" in credits)
+    return { text: "Key refused", ink: "text-destructive", warn: true };
+  return {
+    text: `${USD.format(credits.balance)} left`,
+    ink: credits.low ? WAITING_INK : "text-muted-foreground",
+    warn: credits.low,
+  };
+}
+
+/** What is left on a catalog provider's key (ai/model readKeyCredits); any other key reads nothing. */
+function useKeyCredits(entry: ConfigEntry, set: boolean) {
+  return useServerRoute<KeyCredits | null>(
+    set && isCatalogProvider(entry.provider)
+      ? queryKey.keyCredits(entry.provider)
+      : null,
+  );
+}
+
+/** The plan a signed-in account is on (llm-model route); a key row reads nothing. */
+function useSignInPlan(entry: ConfigEntry, set: boolean) {
+  const { data } = useServerRoute<AiProvider[]>(
+    set && entry.signIn ? queryKey.llmModel : null,
+  );
+  return data?.find((provider) => provider.id === entry.provider)?.plan ?? null;
+}
+
+/** How much of the subscription's plan is used (ai/chatgpt readChatGptUsage); a key row reads nothing. */
+function useSubscriptionUsage(entry: ConfigEntry, set: boolean) {
+  return useServerRoute<SubscriptionUsage | null>(
+    set && entry.signIn ? queryKey.subscriptionUsage : null,
+  );
+}
+
+/**
+ * What a subscription says at the end of its row: the share of its tightest window used. Amber
+ * once it is nearly or wholly spent, because the jobs on it are about to wait for the reset; red
+ * is a sign-in the plan refused.
+ */
+function usageState(usage: SubscriptionUsage): {
+  text: string;
+  ink: string;
+  warn: boolean;
+} {
+  if ("refused" in usage)
+    return { text: "Sign-in refused", ink: "text-destructive", warn: true };
+  return {
+    text: usage.spent ? "Limit reached" : `${usage.usedPercent}% used`,
+    ink: usage.high ? WAITING_INK : "text-muted-foreground",
+    warn: usage.high,
+  };
+}
+
+/** A signed-in row's second line: when the plan's tightest window frees up. */
+function resetLine(usage: SubscriptionUsage | null | undefined): string | null {
+  const live = usage && !("refused" in usage) ? usage : null;
+  return live?.resetsAt
+    ? `resets in ${formatDistanceToNowStrict(new Date(live.resetsAt))}`
+    : null;
+}
+
+/** The plan a sign-in is on, as the backend names it now, beside the account's name. */
+export function PlanBadge({
+  usage,
+  plan,
+}: {
+  usage: SubscriptionUsage | null | undefined;
+  plan: string | null;
+}) {
+  const name = planName(
+    (usage && !("refused" in usage) ? usage.plan : null) ?? plan,
+  );
+  if (!name) return null;
+  return (
+    <span className="rounded-full px-1.5 font-mono text-[9.5px] leading-4 font-normal text-foreground ring-1 ring-border ring-inset">
+      {name}
+    </span>
+  );
+}
+
+/**
+ * The share of the plan's tightest window used, drawn as a bar under the row: read at a glance,
+ * where the number at its end is read closely. It takes the waiting colour where the number does.
+ */
+function UsageBar({ usage }: { usage: SubscriptionUsage }) {
+  if ("refused" in usage) return null;
+  return (
+    <span
+      role="meter"
+      aria-label="Plan used"
+      aria-valuenow={usage.usedPercent}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      className="mt-1.5 block h-1 w-full max-w-48 overflow-hidden rounded-full bg-muted"
+    >
+      <span
+        className={cn(
+          "block h-full rounded-full transition-[width] duration-500",
+          usage.high ? "bg-waiting" : "bg-foreground/45",
+        )}
+        style={{ width: `${Math.min(100, Math.max(2, usage.usedPercent))}%` }}
+      />
+    </span>
+  );
+}
+
+/** Whose key it is, or what it buys when it belongs to no provider. */
+function KeyMark({ entry }: { entry: ConfigEntry }) {
+  if (entry.provider)
+    return <ProviderIcon provider={entry.provider} className="size-4" />;
+  const Mark = KEY_MARKS[entry.key] ?? KeyRound;
+  const glyph = <Mark className="size-4 text-muted-foreground" />;
+  // A service that is not a model provider wears its own icon, as a site does in a thread
+  return entry.site ? (
+    <SiteIcon
+      host={entry.site}
+      className="size-4 rounded-[4px]"
+      fallback={glyph}
+    />
+  ) : (
+    glyph
+  );
+}
+
+/** "Automatic · GPT Subscription · 6 Luna", or why nothing runs; nothing while it is asked. */
+function automaticLabel(
+  automatic: AutomaticModel | undefined,
+  choices: ConfigChoice[],
+): string {
+  if (!automatic) return "Automatic";
+  if (!automatic.ref) return automatic.problem;
+  const { provider, model } = automatic.ref;
+  const named = choices.find(
+    (choice) => choice.value === `${provider}/${model}`,
+  );
+  return `Automatic · ${named?.label ?? model}`;
+}
+
+/**
+ * A choice, not a secret: a studio kind, or the bots' default, picked where it stands with
+ * the picker bots use — its list opens over the row, not a dialog around one field. Unset is
+ * normal, so the field says what runs then. The value sits under the label rather than
+ * across the row: at this width the two ends of a row are not read in one glance. Clearing
+ * means different things: the bots' default falls back to whatever has a key, a studio kind
+ * to the GPT Subscription where its sign-in makes it and otherwise stops being offered at all
+ * (ai/model resolveMediaRef).
+ */
+function ChoiceRow({
+  entry,
+  choices,
+  value,
+  effort,
+  effortValue,
+}: {
+  entry: ConfigEntry;
+  choices: ConfigChoice[];
+  value?: string;
+  /** The entry that sets how hard this model thinks, drawn inside this row (config.const `effortOf`). */
+  effort?: ConfigEntry;
+  effortValue?: string;
+}) {
+  const ref = entry.text ? parseTextModel(value) : parseMediaModel(value);
+  // Unpicked, the bots' default is what the server resolves, named here from its own answer
+  const { data: automatic } = useServerRoute<AutomaticModel>(
+    entry.text && !value && queryKey.automaticModel,
+  );
+  // Unpicked, a studio kind runs on the GPT Subscription while its sign-in makes it, by the
+  // rule the server resolves with (model.schema planMediaOf)
+  const { data: providers } = useServerRoute<AiProvider[]>(
+    entry.kind && !value && queryKey.llmModel,
+  );
+  const signIn = providers?.find((provider) => provider.signIn);
+  const planRuns =
+    entry.kind && !value
+      ? planMediaOf(
+          entry.kind,
+          signIn?.hasKey ? { plan: signIn.plan ?? null } : null,
+        )
+      : null;
+  // A text model is what a bot thinks with, so it wears the bots mark; Cpu here was the memory glyph (memory-mark).
+  const Mark = entry.kind ? KIND_MARKS[entry.kind] : BotsMark;
+  // The row redraws with the pick — the model, its effort, the auto/off badge — so nothing
+  // is said about it; only a failure is (rules/ui notifications).
+  const [save] = useServerAction(setConfigAction, {
+    onOk: () => {
+      revalidate(queryKey.config);
+      revalidate(queryKey.automaticModel);
+    },
+  });
+  const [clear] = useServerAction(removeConfigAction, {
+    onOk: () => {
+      revalidate(queryKey.config);
+      revalidate(queryKey.automaticModel);
+    },
+  });
+
+  return (
+    <div className="flex w-full items-start gap-3 p-4">
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/60">
+        <Mark className="size-4 text-muted-foreground" />
+      </span>
+      <div className="min-w-0 flex-1 space-y-2">
+        <span className="flex min-w-0 items-center gap-1.5 pt-1.5">
+          <span className="truncate text-sm font-medium">{entry.label}</span>
+          {!value && (
+            <span
+              className={cn(
+                "shrink-0 rounded-[5px] border border-border/60 px-1 font-mono text-[10px]",
+                entry.kind && !planRuns ? WAITING_INK : "text-muted-foreground",
+              )}
+            >
+              {/* A studio kind unpicked falls back to nothing on a key: the tool is not
+                  offered at all (ai/model resolveMediaRef), unless the plan makes it */}
+              {entry.kind && !planRuns ? "off" : "auto"}
+            </span>
+          )}
+        </span>
+        <div className="flex flex-col gap-2">
+          <div className="min-w-0">
+            <ModelPicker
+              kind={entry.kind}
+              provider={ref?.provider ?? null}
+              model={ref?.model ?? ""}
+              unset={
+                entry.kind
+                  ? planRuns
+                    ? `Automatic · ${
+                        choices.find(
+                          (choice) =>
+                            choice.value ===
+                            `${planRuns.provider}/${planRuns.model}`,
+                        )?.label ?? planRuns.model
+                      }`
+                    : "Not offered to bots until you pick one"
+                  : automaticLabel(automatic, choices)
+              }
+              onChange={(next) =>
+                save(entry.key, `${next.provider}/${next.model.trim()}`)
+              }
+              onUnset={
+                value
+                  ? () => {
+                      clear(entry.key);
+                      // A step is read off a model's own ladder; with the model back to automatic
+                      // there is none to read, so the step goes with it.
+                      if (effort && effortValue) clear(effort.key);
+                    }
+                  : undefined
+              }
+            />
+          </div>
+          {/* Its own line under the model: what it is, then the steps. The label sits at the
+              top, since a long ladder wraps to a second row of buttons. */}
+          {effort && ref && (
+            <div className="flex items-start gap-3 pt-0.5">
+              <span className="w-12 shrink-0 pt-1.5 font-mono text-[11px] text-muted-foreground">
+                effort
+              </span>
+              <EffortSwitch
+                provider={ref.provider}
+                model={ref.model}
+                value={effortSchema.safeParse(effortValue).data ?? null}
+                onChange={(next) =>
+                  next ? save(effort.key, next) : clear(effort.key)
+                }
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The effort entry that belongs to a model row, where its group has one. */
+const effortEntryOf = (group: ConfigGroup, key: string) =>
+  group.entries.find((entry) => entry.effortOf === key);
+
+function openSignInDialog(entry: ConfigEntry) {
+  return notify.component({
+    className: "sm:max-w-md",
+    renderer: ({ close }) => <SignInDialog entry={entry} onDone={close} />,
+  });
+}
+
+/**
+ * An account instead of a key. Read live: the sign-in finishes in a window of its own, and the
+ * `config` signal it raises (use-thursday) is what turns this dialog to signed in.
+ */
+function SignInDialog({
+  entry,
+  onDone,
+}: {
+  entry: ConfigEntry;
+  onDone: () => void;
+}) {
+  const { data } = useServerRoute<ConfigStatus[]>(queryKey.config);
+  const signedIn = isConfigSet(data, entry.key);
+  const lost = isConfigUnreadable(data, entry.key);
+  // Held in the environment: signing out here would change nothing that is used
+  const env = isConfigFromEnv(data, entry.key);
+  const plan = useSignInPlan(entry, signedIn);
+  const usage = useSubscriptionUsage(entry, signedIn);
+  const state = usage.data ? usageState(usage.data) : null;
+  const [signOut, signingOut] = useServerAction(removeConfigAction, {
+    okMessage: `Signed out of ${entry.label}`,
+    onOk: () => {
+      revalidate(queryKey.config);
+      revalidate(queryKey.llmModel);
+      onDone();
+    },
+  });
+
+  return (
+    <SettingDialogContent
+      title={entry.label}
+      description={
+        signedIn ? (
+          <>
+            Signed in <PlanBadge usage={usage.data} plan={plan} />
+            {resetLine(usage.data) && (
+              <>
+                {" · "}
+                <span className="font-mono">{resetLine(usage.data)}</span>
+              </>
+            )}
+            {state && (
+              <>
+                {" · "}
+                <span className={cn("font-mono", state.ink)}>{state.text}</span>
+              </>
+            )}
+          </>
+        ) : (
+          "Sign in with your ChatGPT account instead of a key"
+        )
+      }
+      footer={
+        <>
+          {(signedIn || lost) && !env && (
+            <Button
+              variant="ghost"
+              loading={signingOut}
+              onClick={async () => {
+                // What runs on the plan stops until the next sign-in, so it is asked like a delete
+                const sure = await notify.confirm({
+                  title: `Sign out of ${entry.label}?`,
+                  description:
+                    "Nothing runs on your plan until you sign in again.",
+                  okText: "Sign out",
+                  destructive: true,
+                });
+                if (sure) signOut(entry.key);
+              }}
+            >
+              Sign out
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onDone}>
+            {signedIn ? "Close" : "Cancel"}
+          </Button>
+          {!signedIn && <ChatGptSignIn />}
+        </>
+      }
+    >
+      <div className="space-y-2">
+        <SettingNote>
+          {signedIn
+            ? "Bots on this subscription spend your plan's usage, not a key. When it runs out, the job stops and says when it resets."
+            : "The sign-in opens in its own window. Approve it there, and this turns to signed in by itself."}
+        </SettingNote>
+        {usage.data && "refused" in usage.data && (
+          <SettingNote className="wrap-break-word text-destructive">
+            {usage.data.refused}
+          </SettingNote>
+        )}
+        {lost && (
+          <SettingNote className={cn("wrap-break-word", WAITING_INK)}>
+            {lostWords("The sign-in saved here", "Sign in again.")}
+          </SettingNote>
+        )}
+        {env && (
+          <SettingNote className="wrap-break-word">
+            {envWords(entry.label)}
+          </SettingNote>
+        )}
+      </div>
+    </SettingDialogContent>
+  );
+}
+
+function openConfigDialog(entry: ConfigEntry, set: boolean) {
+  return notify.component({
+    className: "sm:max-w-md",
+    renderer: ({ close }) => (
+      <ConfigDialog entry={entry} set={set} onDone={close} />
+    ),
+  });
+}
+
+/** Set, replace or remove one key. The current value is never shown. */
+function ConfigDialog({
+  entry,
+  set: opened,
+  onDone,
+}: {
+  entry: ConfigEntry;
+  /** As the row that opened it drew it, until the dialog's own read lands. */
+  set: boolean;
+  onDone: () => void;
+}) {
+  const [value, setValue] = useState("");
+  // Read here rather than handed in: the dialog outlives the row that opened it, and a key
+  // entered again in another tab meanwhile changes both at once
+  const { data: status } = useServerRoute<ConfigStatus[]>(queryKey.config);
+  const set = status ? isConfigSet(status, entry.key) : opened;
+  const lost = isConfigUnreadable(status, entry.key);
+  // Set where this dialog cannot reach: it says where, and offers nothing that would not stick
+  const env = isConfigFromEnv(status, entry.key);
+  const { data: credits } = useKeyCredits(entry, set);
+  const state = credits ? keyState(set, credits) : null;
+
+  // The model picker reads hasKey too, and a catalog key's credits sit under the same url
+  const refresh = () => {
+    revalidate(queryKey.config);
+    revalidate(queryKey.llmModel);
+  };
+
+  const [save, saving] = useServerAction(setConfigAction, {
+    okMessage: `${entry.label} key saved`,
+    onOk: () => {
+      refresh();
+      onDone();
+    },
+  });
+  const [remove, removing] = useServerAction(removeConfigAction, {
+    okMessage: `${entry.label} key removed`,
+    onOk: () => {
+      refresh();
+      onDone();
+    },
+  });
+  const confirmRemove = async () => {
+    const confirmed = await notify.confirm({
+      title: `Remove the ${entry.label} key?`,
+      description:
+        "It is deleted from this computer, and nothing runs on it until a key is pasted again.",
+      okText: "Remove",
+      destructive: true,
+    });
+    if (confirmed) remove(entry.key);
+  };
+
+  return (
+    <SettingDialogContent
+      title={entry.label}
+      description={
+        <>
+          <span className="font-mono">{entry.key}</span>
+          {env ? <> · set in env</> : entry.hint && <> · {entry.hint}</>}
+          {state && (
+            <>
+              {" · "}
+              <span className={cn("font-mono", state.ink)}>{state.text}</span>
+            </>
+          )}
+        </>
+      }
+      footer={
+        env ? (
+          <Button onClick={onDone}>Close</Button>
+        ) : (
+          <>
+            {/* set apart from what saves, at the far end and in red; a key that can no longer be
+              read can go without a new one */}
+            {(set || lost) && (
+              <Button
+                variant="ghost"
+                loading={removing}
+                onClick={() => void confirmRemove()}
+                className="mr-auto text-destructive hover:text-destructive"
+              >
+                Remove
+              </Button>
+            )}
+            <Button variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+            <Button
+              loading={saving}
+              disabled={value.trim().length < KEY_MIN}
+              onClick={() => save(entry.key, value)}
+            >
+              {set ? "Replace" : "Save"}
+            </Button>
+          </>
+        )
+      }
+    >
+      <div className="space-y-2">
+        {env ? (
+          <SettingNote className="wrap-break-word">
+            {envWords(entry.label)}
+          </SettingNote>
+        ) : (
+          <Input
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && value.trim().length >= KEY_MIN)
+                save(entry.key, value);
+            }}
+            // what a key looks like says more than the setting's name, which is above
+            placeholder={
+              set
+                ? "New value — replaces the current key"
+                : lost
+                  ? "Paste the key again"
+                  : (entry.keyLooks ?? "Paste the key")
+            }
+            spellCheck={false}
+            type="password"
+            autoFocus
+          />
+        )}
+        {!set && entry.keysAt && (
+          <a
+            href={entry.keysAt}
+            target="_blank"
+            rel="noreferrer"
+            className="flex w-fit items-center gap-1 px-0.5 text-[13px] text-foreground underline underline-offset-3 hover:text-foreground/80"
+          >
+            Get a key at {new URL(entry.keysAt).host}
+            <ArrowUpRight className="size-3.5" />
+          </a>
+        )}
+        {credits && "refused" in credits && (
+          <SettingNote className="wrap-break-word text-destructive">
+            {credits.refused}
+          </SettingNote>
+        )}
+        {lost && (
+          <SettingNote className={cn("wrap-break-word", WAITING_INK)}>
+            {lostWords("The key saved here", "Paste it again.")}
+          </SettingNote>
+        )}
+      </div>
+    </SettingDialogContent>
+  );
+}

@@ -1,0 +1,199 @@
+import * as z from "zod";
+import { MEMORY_LIMITS } from "@/config";
+import { type DateLike, DateLikeSchema, toDate } from "@/lib/date-like";
+
+/**
+ * Who put a fact here. Memory is one note kept by three hands — the user typing
+ * on the screen, the call as they talk, and a bot that turned something up
+ * mid-job — and they are not equally close to the user. A reader that cannot
+ * tell them apart reads what a bot inferred as something the user said.
+ */
+const MemorySourceSchema = z.enum(["user", "call", "bot"]);
+
+export type MemorySource = z.infer<typeof MemorySourceSchema>;
+
+/**
+ * How a source reads on screen. Recorded for the person looking at their own
+ * memory, not for a model: a bare `bot` in a prompt says nothing a reader can
+ * act on — it cannot tell whether that was itself — and costs a sentence to
+ * explain. Empty where it was never recorded.
+ */
+export const memorySourceLabel = (source: MemorySource | null | undefined) =>
+  source === "user"
+    ? "you"
+    : source === "call"
+      ? "on a call"
+      : source === "bot"
+        ? "a bot"
+        : "";
+
+/**
+ * The line a note is listed by: what it is about, in one line, the names people
+ * use for it included. The screen's actions and the model's tools both check it
+ * here, so a line too long for the listing is refused whichever hand wrote it
+ * (config MEMORY_LIMITS.descriptionChars).
+ */
+export const NoteLineSchema = z
+  .string()
+  .trim()
+  .min(1, "A note needs a line saying what it is about")
+  .max(
+    MEMORY_LIMITS.descriptionChars,
+    `A note's line is one line: at most ${MEMORY_LIMITS.descriptionChars} characters`,
+  );
+
+// Storage is fact-based: one row per fact, history via isLatest.
+const MemoryFactSchema = z.object({
+  id: z.number(),
+  text: z.string(),
+  /** Null on rows written before the hand was recorded. */
+  source: MemorySourceSchema.nullish(),
+  createdAt: DateLikeSchema,
+});
+
+const MemoryNoteSchema = z.object({
+  id: z.number(),
+  path: z.string(),
+  description: z.string(),
+  /** Created by the user; never auto-deleted when empty. */
+  ownedByUser: z.boolean(),
+  hits: z.number(),
+  lastReadAt: DateLikeSchema.nullable(),
+  createdAt: DateLikeSchema,
+  updatedAt: DateLikeSchema,
+  factCount: z.number(),
+  facts: MemoryFactSchema.array(),
+});
+
+export type MemoryNote = z.infer<typeof MemoryNoteSchema>;
+
+/**
+ * Where notes may live and what each place holds. The prompt lists it, writes
+ * validate against it, the screen groups by it, and the two root notes are
+ * listed by their line here. Everything here may be read aloud. Profile and
+ * preferences are written out whole in every call's prompt, which is why the
+ * preferences line says a rule belongs there: a rule filed under a topic is
+ * one the voice never reads.
+ */
+/** How they want things done: written out whole for her on every call, and for every bot. */
+export const PREFERENCES_NOTE = "preferences";
+
+export const MEMORY_PATHS = [
+  {
+    path: "profile",
+    of: "The user themselves — name, age, what they do, where they live, whatever else says who they are",
+  },
+  {
+    path: PREFERENCES_NOTE,
+    of: "How they want things done, and said — read whole on every call, so a rule for a particular situation goes here too",
+  },
+  { path: "people/", of: "Someone in their life, and what matters about them" },
+  {
+    path: "projects/",
+    of: "Something with an end — a trip, a purchase, a deadline, a thing being built",
+  },
+  { path: "topics/", of: "Something ongoing that keeps coming back" },
+] as const;
+
+/** Notes without a section. */
+const MEMORY_ROOT_NOTES = MEMORY_PATHS.filter(
+  (entry) => !entry.path.endsWith("/"),
+).map((entry) => entry.path) as ("profile" | "preferences")[];
+
+/** Notes about a named thing live under one of these. */
+const MEMORY_SECTIONS = MEMORY_PATHS.filter((entry) =>
+  entry.path.endsWith("/"),
+).map((entry) => entry.path.slice(0, -1)) as (
+  | "people"
+  | "projects"
+  | "topics"
+)[];
+
+const MEMORY_PATH_RE = new RegExp(
+  `^(?:${MEMORY_ROOT_NOTES.join("|")}|(?:${MEMORY_SECTIONS.join("|")})/.+)$`,
+);
+
+export const isMemoryPath = (path: string) => MEMORY_PATH_RE.test(path);
+
+/**
+ * Notes that stay listed with zero facts: the root notes. Their listing line is
+ * the app's, not a model's: memory.query ensureRootNotes resets it at boot and
+ * no tool renames one (ai/tools/memory.tool), so the line cannot drift with
+ * whoever wrote last.
+ */
+export const MEMORY_ALWAYS_LISTED: string[] = MEMORY_ROOT_NOTES;
+
+export const isAlwaysListed = (path: string) =>
+  MEMORY_ALWAYS_LISTED.includes(path);
+
+/**
+ * `other` holds a path outside the convention. A model cannot create one
+ * (memory_create refuses it), so only rows older than that rule land there,
+ * kept on screen to open and delete.
+ */
+export type MemorySection = "you" | (typeof MEMORY_SECTIONS)[number] | "other";
+
+/** How the screen groups notes; derived from MEMORY_PATHS. */
+export function sectionOf(path: string): MemorySection {
+  if (isAlwaysListed(path)) return "you";
+  const head = path.slice(0, path.indexOf("/"));
+  return (MEMORY_SECTIONS as readonly string[]).includes(head)
+    ? (head as (typeof MEMORY_SECTIONS)[number])
+    : "other";
+}
+
+// Model-facing shapes: narrower than the UI's on purpose.
+
+type MemoryFactRef = {
+  /** What `memory_forget` and `replaces` take. */
+  id: number;
+  text: string;
+  /** When the call it was said in started, when a call wrote it. Formatted by the tool, never sent as a Date. */
+  saidAt?: Date;
+};
+
+/** A note as returned by recall or after a write. */
+export type MemoryNoteView = {
+  path: string;
+  description: string;
+  facts: MemoryFactRef[];
+};
+
+/** One fact as a model writes it; `replaces` retires the fact it stands in for. */
+export type MemoryFactWrite = {
+  text: string;
+  replaces?: number | null;
+};
+
+/** One line of the note index in the system prompt. */
+export type MemoryIndexEntry = {
+  path: string;
+  description: string;
+  factCount: number;
+  /** Last recall, or creation when never recalled. */
+  lastSeenAt: DateLike;
+};
+
+/** 'people/alice' → 'alice'; bare paths name themselves. */
+export function noteTitle(path: string): string {
+  const slash = path.indexOf("/");
+  return slash === -1 ? path : path.slice(slash + 1);
+}
+
+/** Recall score used for ranking: reads warm a note, neglect cools it. */
+export function recallScore(note: {
+  hits: number;
+  lastReadAt: DateLike | null;
+  createdAt: DateLike;
+}): number {
+  // Wire data is an ISO string, drizzle returns a Date; both accepted.
+  const last = toDate(note.lastReadAt ?? note.createdAt);
+  const days = Math.max(0, (Date.now() - last.getTime()) / 86_400_000);
+  return (note.hits + 1) / (1 + days);
+}
+
+export function isFading(
+  note: Parameters<typeof recallScore>[0] & { path: string },
+): boolean {
+  return !isAlwaysListed(note.path) && recallScore(note) < 0.15;
+}

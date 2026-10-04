@@ -1,0 +1,1045 @@
+import { LIVE_CALL } from "@/config";
+import { logger } from "@/lib/logger";
+import { errorToString } from "@/lib/utils";
+import {
+  LIVE_HOSTED_TOOLS,
+  type LiveClose,
+  type LiveFragment,
+} from "./live.schema";
+import { createWebRtcTransport, type Negotiated } from "./live.transport";
+
+/** A revisable display group, independent of audio playback and backend responses. */
+export type LiveTurn = {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  tool?: string;
+  text: string;
+  seq: number;
+  done: boolean;
+  fragments?: LiveFragment[];
+};
+export type LiveToolCall = {
+  id: string;
+  name: string;
+  arguments: string;
+  /** The output item the call arrived in: the id its tool turn is saved under. */
+  item?: string;
+};
+/**
+ * One reasoning summary part of the backend, whole. A summary is the backend's
+ * own account of its thinking, not its reasoning tokens, and comes only while a
+ * model reasons.
+ */
+export type LiveReasoning = {
+  /** The reasoning item and the summary part within it. */
+  id: string;
+  text: string;
+  /** Where in the call, on the turns' clock. */
+  seq: number;
+};
+export type LiveActivity = {
+  working: boolean;
+  speaking: boolean;
+  tools: string[];
+};
+/** A page the backend's web search read, as the item or a citation names it. */
+export type LiveSource = { url: string; title?: string };
+/**
+ * A web search the backend ran with its hosted tool: reported as it starts and once
+ * it is done. Its answer's citations come separately (`cited`), under the same response.
+ */
+export type LiveSearch = {
+  /** The search item. */
+  id: string;
+  /** The backend response it belongs to. */
+  responseId: string;
+  query: string | null;
+  sources: LiveSource[];
+  done: boolean;
+  /** Where in the call, on the turns' clock. */
+  seq: number;
+};
+export type LiveAudio = {
+  element: HTMLAudioElement;
+  listen(stream: MediaStream): void;
+  hear?(stream: MediaStream): void;
+  levels?(): { output: number };
+};
+type LiveOptions = {
+  /**
+   * Exchanges the offer on the server and returns the SDP answer; on the GPT subscription's line,
+   * with where the server relays the call's events (live.transport).
+   */
+  initialize(sdp: string): Promise<Negotiated>;
+  audio: LiveAudio;
+  on: {
+    runTool(call: LiveToolCall): Promise<string>;
+    reasoning?(part: LiveReasoning): void;
+    search?(search: LiveSearch): void;
+    /** URL citations on a backend answer, by the response that wrote it. */
+    cited?(responseId: string, sources: LiveSource[]): void;
+    turn(turn: LiveTurn): void;
+    activity(activity: LiveActivity): void;
+    finalized?(close: LiveClose): void;
+    warn(message: string): void;
+    failed(message: string): void;
+  };
+};
+type AppendKind = "instructions" | "commentary" | "thinking";
+/** One update, split into chunks Live accepts; settles once, true only if every chunk was acknowledged. */
+type Append = { kind: AppendKind; chunks: string[]; settle(ok: boolean): void };
+
+/**
+ * Live takes at most 500 tokens per append. A token is at least one UTF-8 byte,
+ * so a byte bound holds for any script; words stay whole unless one alone is too long.
+ */
+const APPEND_BYTES = 480;
+/**
+ * How long a `response.create` with no `response.created` behind it still counts as
+ * backend work. The wire's own round trip, bounded so a lost event never reads as
+ * work for the rest of the call.
+ */
+const CONTINUE_GAP_MS = 5_000;
+/**
+ * What one data channel message may carry when the far end names no limit (the SCTP default
+ * the two ends both know), for a picture put down while the connection says none it can be
+ * held to.
+ */
+const SCTP_DEFAULT_BYTES = 65_536;
+/** Room left in that message for the event around a picture: its type, ids and fields. */
+const PICTURE_ENVELOPE_BYTES = 1_024;
+/** Room in a picture's message for the words naming it, past its path: `, as an image:` in its part. */
+const PICTURE_WORDS_BYTES = 64;
+const encoder = new TextEncoder();
+
+export function appendChunks(text: string): string[] {
+  const chunks: string[] = [];
+  let chunk = "";
+  let bytes = 0;
+  const push = (piece: string) => {
+    const size = encoder.encode(piece).length;
+    if (bytes + size > APPEND_BYTES && chunk) {
+      chunks.push(chunk);
+      chunk = "";
+      bytes = 0;
+    }
+    if (size <= APPEND_BYTES) {
+      chunk += piece;
+      bytes += size;
+      return;
+    }
+    for (const character of piece) {
+      const length = encoder.encode(character).length;
+      if (bytes + length > APPEND_BYTES) {
+        chunks.push(chunk);
+        chunk = "";
+        bytes = 0;
+      }
+      chunk += character;
+      bytes += length;
+    }
+  };
+  for (const piece of text.split(/(?<=\s)/)) push(piece);
+  if (chunk) chunks.push(chunk);
+  return chunks;
+}
+export type LiveSession = ReturnType<typeof createLiveSession>;
+
+export async function openLiveSession(
+  options: LiveOptions,
+): Promise<LiveSession> {
+  const session = createLiveSession(options);
+  try {
+    await session.connect();
+    return session;
+  } catch (cause) {
+    await session.close();
+    throw cause;
+  }
+}
+
+/** Events consumed from Live; backend events remain inside response.event. */
+type LiveEvent = {
+  type: string;
+  event_id?: string;
+  delegation_id?: string;
+  client_event_id?: string;
+  delta?: string;
+  start_ms?: number;
+  end_ms?: number;
+  offset_ms?: number;
+  error?: { message?: string; client_event_id?: string };
+  reason?: string;
+  usage?: { seconds: number };
+  event?: {
+    type: string;
+    response?: {
+      id: string;
+      error?: { message?: string };
+      status?: string;
+      usage?: unknown;
+    };
+    response_id?: string;
+    item_id?: string;
+    summary_index?: number;
+    text?: string;
+    item?: {
+      type: string;
+      id: string;
+      call_id: string;
+      name: string;
+      arguments: string;
+      status?: string;
+      /** A `web_search_call` item: what it searched, and the pages when included. */
+      action?: {
+        query?: string;
+        /** The guide says a search action lists its `queries`; its example shows `query`. */
+        queries?: string[];
+        sources?: { url?: string }[];
+      };
+      /** A `message` item: the answer, with its citations. */
+      content?: {
+        type: string;
+        annotations?: { type: string; url?: string; title?: string }[];
+      }[];
+    };
+  };
+};
+
+/** Pages a search item names, each once. */
+function sourcesOf(sources: { url?: string }[] | undefined): LiveSource[] {
+  const urls = (sources ?? []).flatMap((source) =>
+    source.url ? [source.url] : [],
+  );
+  return [...new Set(urls)].map((url) => ({ url }));
+}
+
+/** URL citations across an answer's parts, each page once with its title. */
+function citationsOf(
+  content: NonNullable<NonNullable<LiveEvent["event"]>["item"]>["content"],
+): LiveSource[] {
+  const found = new Map<string, LiveSource>();
+  for (const part of content ?? [])
+    for (const note of part.annotations ?? [])
+      if (note.type === "url_citation" && note.url && !found.has(note.url))
+        found.set(note.url, {
+          url: note.url,
+          ...(note.title ? { title: note.title } : {}),
+        });
+  return [...found.values()];
+}
+
+type Transcript = {
+  turn: LiveTurn;
+  end: number;
+  fragments: { start: number; end: number; text: string }[];
+};
+/** A picture for the backend: its data URL, and the workspace path it was read from. */
+type Picture = { image: string; path: string };
+/** What goes into the backend's conversation and starts no turn: a fact (`brief`), or a picture. */
+type Given = { fact: string } | Picture;
+type BackendResponse = {
+  calls: Map<string, Promise<void>>;
+  /**
+   * What waits on this turn: the facts and pictures put down while it ran or waited on its
+   * tools. They go in order once every output is in — just before the turn goes on, or, when
+   * it does not, straight after the outputs. The guide returns every pending result first: an
+   * item between a call and its output, or between two outputs of one turn, is an order it
+   * never shows.
+   */
+  held: Given[];
+  /**
+   * What waited on it has gone in: nothing waits on it, and what is put down now goes in at
+   * once. Not `continued`, which is set before its tools' outputs are in.
+   */
+  settled?: boolean;
+  terminal: boolean;
+  continued: boolean;
+  /** Taken for ended by a top-level error that named no end for it; lifted if it goes on. */
+  stale?: boolean;
+  /**
+   * A run was asked for while it went (`run`): what waited on it goes in, then a run on it
+   * follows, unless it goes on after its tools, which takes it in by itself.
+   */
+  rerun?: boolean;
+};
+
+/** The events that end a backend response. */
+const TERMINAL_EVENTS = [
+  "response.completed",
+  "response.failed",
+  "response.incomplete",
+  "response.cancelled",
+];
+
+/** Full-duplex speech and a separate Responses tool loop share one Live connection. */
+export const createLiveSession = ({ initialize, audio, on }: LiveOptions) => {
+  let started = false;
+  let closing = false;
+  let closed = false;
+  let resolveStarted: (() => void) | undefined;
+  let rejectStarted: ((cause: Error) => void) | undefined;
+  let resolveClosed: (() => void) | undefined;
+  let closePromise: Promise<void> | undefined;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let activityTimer: ReturnType<typeof setInterval> | undefined;
+  let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
+  let appendTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeline = 0;
+  let ordinal = 0;
+  let activityKey = "";
+  const transcripts: Transcript[] = [];
+  const dirty = new Set<Transcript>();
+  const events = new Set<string>();
+  const calls = new Set<string>();
+  const responses = new Map<string, BackendResponse>();
+  /** An incomplete response was just continued; the next one in a row is not. */
+  let salvaging = false;
+  const delegatedResponses = new Map<string, string>();
+  const tools = new Map<string, string>();
+  const appends: Append[] = [];
+  /** The chunk on the wire, by the event id its acknowledgement names. */
+  let pendingAppend: string | null = null;
+  let lastOutput = -Infinity;
+  /**
+   * The caller's input held off while she opens the call (`holdInput`): the mute command,
+   * and the unmute once it is sent, by the event ids their answers name.
+   */
+  let held: { mute: string; unmute: string | null } | null = null;
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
+  const letGo = () => {
+    clearTimeout(holdTimer);
+    if (!held || held.unmute || closed || closing) return;
+    held.unmute = crypto.randomUUID();
+    transport.send({
+      type: "session.input_audio.unmute",
+      event_id: held.unmute,
+    });
+  };
+
+  const flushTranscripts = () => {
+    clearTimeout(transcriptTimer);
+    transcriptTimer = undefined;
+    for (const group of dirty)
+      on.turn({ ...group.turn, fragments: [...group.fragments], done: true });
+    dirty.clear();
+  };
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearTimeout(closeTimer);
+    clearTimeout(appendTimer);
+    clearTimeout(holdTimer);
+    if (early) clearTimeout(early.timer);
+    early = null;
+    clearInterval(activityTimer);
+    flushTranscripts();
+    pendingAppend = null;
+    for (const entry of appends.splice(0)) entry.settle(false);
+    transport.close();
+    resolveClosed?.();
+  };
+  const fail = (message: string) => {
+    rejectStarted?.(new Error(message));
+    cleanup();
+    if (started && !closing) on.failed(message);
+    else if (closing) on.warn(message);
+  };
+  /**
+   * When a turn of the backend's was last asked for — the page going on or running it, or the
+   * voice handing over — and has not started; cleared once its response starts.
+   */
+  let continuedAt = Number.NEGATIVE_INFINITY;
+  const activity = () => {
+    if (closed || closing) return;
+    const now = performance.now();
+    const levels = audio.levels?.();
+    // A short release follows the phrase rather than each syllable.
+    if (levels && levels.output > 0.01) lastOutput = now;
+    const value = {
+      speaking: now - lastOutput < 300,
+      working:
+        [...responses.values()].some((response) => !response.terminal) ||
+        tools.size > 0 ||
+        // Asked to go on, not yet started: still the same stretch of backend work
+        now - continuedAt < CONTINUE_GAP_MS,
+      tools: [...tools.values()],
+    };
+    const key = JSON.stringify(value);
+    if (key !== activityKey || value.speaking || value.working) {
+      activityKey = key;
+      on.activity(value);
+    }
+  };
+  const appendNext = () => {
+    if (!started || closed || closing || pendingAppend || !appends.length)
+      return;
+    const [next] = appends;
+    pendingAppend = crypto.randomUUID();
+    transport.send({
+      type: `session.${next.kind}.append`,
+      event_id: pendingAppend,
+      // Required, and null for app updates in Responses mode: a response id is not a delegation id.
+      delegation_id: null,
+      content: next.chunks[0],
+    });
+    appendTimer = setTimeout(() => {
+      on.warn(
+        "Live did not acknowledge the conversation update; delivery is unknown.",
+      );
+      settleAppend(false);
+    }, LIVE_CALL.appendMs);
+  };
+  /**
+   * An acknowledged chunk sends the next one of the same update. A rejected or
+   * unacknowledged one drops the rest of that update — half an instruction is
+   * worse than none — and is never resent, since it may have landed.
+   */
+  const settleAppend = (ok: boolean) => {
+    clearTimeout(appendTimer);
+    pendingAppend = null;
+    const [entry] = appends;
+    if (!entry) return;
+    if (ok) entry.chunks.shift();
+    if (!ok || !entry.chunks.length) {
+      appends.shift();
+      entry.settle(ok);
+    }
+    appendNext();
+  };
+  const transcript = (event: LiveEvent, role: "user" | "assistant") => {
+    if (
+      !event.delta ||
+      event.start_ms === undefined ||
+      event.end_ms === undefined
+    )
+      return;
+    const start = event.start_ms;
+    const end = event.end_ms;
+    let group = transcripts.findLast(
+      (entry) =>
+        entry.turn.role === role &&
+        start >= entry.turn.seq - LIVE_CALL.transcriptGapMs &&
+        start <= entry.end + LIVE_CALL.transcriptGapMs &&
+        // Her answer to what they just said is a new turn, however soon it follows her
+        // last words; theirs still holds together across the listening sounds she makes
+        (role === "user" ||
+          !transcripts.some(
+            (other) =>
+              other.turn.role === "user" &&
+              other.turn.seq > entry.turn.seq &&
+              other.turn.seq < start,
+          )),
+    );
+    if (!group) {
+      group = {
+        turn: {
+          id: `live-${ordinal++}`,
+          role,
+          text: "",
+          seq: start,
+          done: false,
+        },
+        end,
+        fragments: [],
+      };
+      transcripts.push(group);
+    }
+    group.fragments.push({ start, end, text: event.delta });
+    group.fragments.sort((a, b) => a.start - b.start);
+    group.end = Math.max(group.end, end);
+    group.turn.text = group.fragments.map((fragment) => fragment.text).join("");
+    on.turn({ ...group.turn, done: false });
+    dirty.add(group);
+    // Periodic checkpoints can be revised by a late fragment; these are display groups, not semantic turns.
+    transcriptTimer ??= setTimeout(
+      flushTranscripts,
+      LIVE_CALL.transcriptSaveMs,
+    );
+  };
+  /** Runs the backend, or goes on with it once every output of its turn is in. */
+  const ask = () => {
+    continuedAt = performance.now();
+    transport.send({
+      type: "response.create",
+      event_id: crypto.randomUUID(),
+    });
+  };
+  /**
+   * What waited on a turn of the backend's, into its conversation now, in order; and the run
+   * asked for while it went, unless the turn `goesOn` after its tools.
+   */
+  const release = (response: BackendResponse, goesOn = false) => {
+    response.settled = true;
+    for (const given of response.held.splice(0))
+      if ("fact" in given) sendFact(given.fact);
+      else sendImage(given);
+    // Taken either way: gone on with, the run was that, and it is not asked again later
+    const rerun = response.rerun;
+    response.rerun = false;
+    if (rerun && !goesOn) ask();
+  };
+  /**
+   * What is put down or asked for after a turn was asked for and before it starts: that turn
+   * takes it when it does, as what comes while a turn runs. Sent without it — the run asked
+   * then — once CONTINUE_GAP_MS passes with no turn started.
+   */
+  let early: {
+    held: Given[];
+    rerun: boolean;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  const flushEarly = () => {
+    const was = early;
+    early = null;
+    if (!was) return;
+    clearTimeout(was.timer);
+    if (closed || closing) return;
+    for (const given of was.held)
+      if ("fact" in given) sendFact(given.fact);
+      else sendImage(given);
+    if (was.rerun) ask();
+  };
+  /**
+   * The turn of the backend's that what is put down now waits on: the latest, while it runs
+   * or waits on its tools' outputs. None when it is quiet, and what is put down goes in at once.
+   */
+  const runningTurn = () => {
+    const latest = [...responses.values()].at(-1);
+    return latest &&
+      !latest.settled &&
+      (!latest.terminal || latest.calls.size > 0)
+      ? latest
+      : undefined;
+  };
+  /**
+   * What what is put down now waits on: the turn that runs, or one asked for that has not
+   * started (early). None when the backend is quiet, and it goes in at once. Asked again
+   * while one had not started, a second run met the first and her answer to it was lost.
+   */
+  const waitingOn = (): { held: Given[]; rerun?: boolean } | undefined => {
+    const running = runningTurn();
+    if (running) return running;
+    const since = performance.now() - continuedAt;
+    if (since >= CONTINUE_GAP_MS) return undefined;
+    early ??= {
+      held: [],
+      rerun: false,
+      timer: setTimeout(flushEarly, CONTINUE_GAP_MS - since),
+    };
+    return early;
+  };
+  const continueResponse = async (response: BackendResponse) => {
+    if (!response.terminal || response.continued) return;
+    // Nothing to go on with: what waited on it goes in, for the turn handed over next
+    if (!response.calls.size) return release(response);
+    response.continued = true;
+    await Promise.all(response.calls.values());
+    if (!closing && !closed) {
+      release(response, true);
+      ask();
+    }
+    activity();
+  };
+  /**
+   * A turn that ends without going on — failed, cancelled, or cut off again after one was
+   * continued: what waited on it goes in once its tools' outputs are, and the run asked for
+   * while it went follows. Any sooner puts an item between a call and its output.
+   */
+  const endResponse = async (response: BackendResponse) => {
+    response.continued = true;
+    // A turn that called none has nothing to wait for, and is let go as it ends
+    if (response.calls.size) await Promise.all(response.calls.values());
+    if (!closing && !closed) release(response);
+    activity();
+  };
+  /**
+   * A tool's result for the backend. One the connection will not carry is answered in its
+   * place, as a picture is (sendImage): thrown, it left the backend holding a call with no
+   * output and the turn never going on, so the voice waited on a hand-over that never came.
+   */
+  const sendOutput = (callId: string, output: string) => {
+    const send = (text: string) =>
+      transport.send({
+        type: "response.item.create",
+        event_id: crypto.randomUUID(),
+        item: { type: "function_call_output", call_id: callId, output: text },
+      });
+    try {
+      send(output);
+    } catch (cause) {
+      const reason = errorToString(cause);
+      logger.warn("Live tool output not sent", {
+        reason,
+        chars: output.length,
+      });
+      try {
+        send(
+          `Error: the result was too large to return (${output.length.toLocaleString("en")} characters: ${reason}). Ask for a smaller part of it.`,
+        );
+      } catch (again) {
+        logger.warn("Live tool output not answered", {
+          reason: errorToString(again),
+        });
+      }
+    }
+  };
+  /** A fact for the backend alone, as a developer message. */
+  const sendFact = (text: string) =>
+    transport.send({
+      type: "response.item.create",
+      event_id: crypto.randomUUID(),
+      item: {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text }],
+      },
+    });
+  /**
+   * A picture for the backend, as the user's image, named by its path. One the connection will
+   * not carry is said to the backend and to the user instead. The backend was told of the file
+   * (where it is kept, or that it was shown) and without a word would describe what it never
+   * saw; the user's picture went unseen.
+   */
+  const sendImage = ({ image, path }: Picture) => {
+    try {
+      transport.send({
+        type: "response.item.create",
+        event_id: crypto.randomUUID(),
+        item: {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: `${path}, as an image:` },
+            { type: "input_image", image_url: image },
+          ],
+        },
+      });
+    } catch (cause) {
+      const reason = errorToString(cause);
+      logger.warn("Live picture not sent", { reason, bytes: image.length });
+      sendFact(
+        `The picture of ${path} did not go through, so nothing on it was seen: ${reason}`,
+      );
+      on.warn(`${path} did not go through to her: ${reason}`);
+    }
+  };
+  /**
+   * The most a picture's data URL may take to go in one message naming `path` (sendImage): what
+   * the connection carries in one, less the event around the picture, the words naming it and
+   * the path's own bytes.
+   */
+  const pictureRoom = (path: string): number => {
+    const limit = transport.limit();
+    // A limit no picture can be held to — none yet, 0, none at all (Infinity), or too small for
+    // the event around one — is taken as the smallest one every end takes
+    const bytes =
+      limit && Number.isFinite(limit) && limit > PICTURE_ENVELOPE_BYTES * 2
+        ? limit
+        : SCTP_DEFAULT_BYTES;
+    return (
+      bytes -
+      PICTURE_ENVELOPE_BYTES -
+      encoder.encode(path).length -
+      PICTURE_WORDS_BYTES
+    );
+  };
+  const handle = (event: LiveEvent) => {
+    if (closed) return;
+    if (event.event_id) {
+      if (events.has(event.event_id)) return;
+      events.add(event.event_id);
+    }
+    timeline = Math.max(timeline, event.offset_ms ?? 0, event.end_ms ?? 0);
+    switch (event.type) {
+      case "session.started":
+        started = true;
+        resolveStarted?.();
+        appendNext();
+        break;
+      case "session.closed":
+        on.finalized?.({
+          reason: event.reason ?? "closed",
+          seconds: event.usage?.seconds ?? null,
+        });
+        logger.info("Live session closed", {
+          reason: event.reason,
+          seconds: event.usage?.seconds,
+        });
+        rejectStarted?.(
+          new Error("OpenAI Live closed before startup completed."),
+        );
+        cleanup();
+        if (!closing)
+          on.failed(`The Live call ended (${event.reason ?? "closed"}).`);
+        break;
+      case "session.input_transcript.delta":
+        transcript(event, "user");
+        break;
+      case "session.output_transcript.delta":
+        // Her opening has begun: the caller is heard again
+        letGo();
+        transcript(event, "assistant");
+        break;
+      case "session.input_audio.unmuted":
+        if (held && event.client_event_id === held.unmute) held = null;
+        break;
+      case "session.instructions.appended":
+      case "session.commentary.appended":
+      case "session.thinking.appended":
+        if (pendingAppend && event.client_event_id === pendingAppend)
+          settleAppend(true);
+        break;
+      case "error": {
+        const message =
+          event.error?.message ?? "OpenAI Live reported an error.";
+        if (!started) {
+          fail(message);
+          break;
+        }
+        // An unmute refused leaves her deaf to the caller for the rest of the call: said, not
+        // talked through. A mute refused left the input open, so there is nothing to let go.
+        if (held?.unmute && event.error?.client_event_id === held.unmute) {
+          fail(`She could not hear the microphone again: ${message}`);
+          break;
+        }
+        if (held && event.error?.client_event_id === held.mute) {
+          clearTimeout(holdTimer);
+          held = null;
+        }
+        on.warn(message);
+        if (pendingAppend && event.error?.client_event_id === pendingAppend)
+          settleAppend(false);
+        // Live can end a handoff with this error and no terminal event for its response:
+        // counted open, "working" stayed on for the rest of the call and held the quiet clock
+        // and every update back. One that ran no tool counts as ended until more of it comes.
+        for (const response of responses.values())
+          if (!response.terminal && !response.calls.size) {
+            response.terminal = true;
+            response.stale = true;
+            release(response);
+          }
+        activity();
+        break;
+      }
+      // The voice handed over: its turn is asked for, and starts with the events that follow
+      // (the delegation guide: "Subsequent Responses events arrive inside a response.event")
+      case "session.delegation.created":
+        continuedAt = performance.now();
+        break;
+      case "response.event": {
+        const nested = event.event;
+        if (!nested || closing) break;
+        if (nested.type === "response.created")
+          continuedAt = Number.NEGATIVE_INFINITY;
+        if (
+          nested.type === "response.created" &&
+          nested.response &&
+          event.delegation_id
+        )
+          delegatedResponses.set(event.delegation_id, nested.response.id);
+        const id =
+          nested.response?.id ??
+          nested.response_id ??
+          (event.delegation_id
+            ? delegatedResponses.get(event.delegation_id)
+            : undefined);
+        if (!id) break;
+        let response = responses.get(id);
+        if (!response) {
+          // A new turn: one before it that never ended — its handoff cut off by an error,
+          // after its tools had run — goes no further, and what waited on it waits on this.
+          // One going on after its tools' outputs sends its own (continueResponse)
+          const carried: Given[] = [];
+          let rerun = false;
+          for (const earlier of responses.values())
+            if (!earlier.settled && !earlier.continued) {
+              earlier.settled = true;
+              carried.push(...earlier.held.splice(0));
+              rerun ||= Boolean(earlier.rerun);
+            }
+          // and what came while it was asked for and not yet started
+          if (early) {
+            clearTimeout(early.timer);
+            carried.push(...early.held);
+            rerun ||= early.rerun;
+            early = null;
+          }
+          response = {
+            calls: new Map(),
+            held: carried,
+            terminal: false,
+            continued: false,
+            rerun,
+          };
+          responses.set(id, response);
+        }
+        // Heard from again after an error took it for ended: it is still going, and what is
+        // put down waits on it again
+        if (response.stale && !TERMINAL_EVENTS.includes(nested.type)) {
+          response.stale = false;
+          response.terminal = false;
+          response.settled = false;
+        }
+        if (nested.type === "response.reasoning_summary_text.done") {
+          on.reasoning?.({
+            id: `${nested.item_id}:${nested.summary_index ?? 0}`,
+            text: nested.text ?? "",
+            seq: timeline,
+          });
+        }
+        // The hosted web search runs inside the backend: nothing to execute or answer,
+        // only what it looked for and read. Sources come on the item when the response
+        // carries them, and as citations on the answer that used them.
+        if (
+          (nested.type === "response.output_item.added" ||
+            nested.type === "response.output_item.done") &&
+          nested.item?.type === LIVE_HOSTED_TOOLS.webSearch.item
+        ) {
+          const item = nested.item;
+          const done = nested.type === "response.output_item.done";
+          if (done) logger.debug("Live web search", item);
+          on.search?.({
+            id: item.id,
+            responseId: id,
+            query:
+              (
+                item.action?.query ?? item.action?.queries?.join(" · ")
+              )?.trim() || null,
+            sources: sourcesOf(item.action?.sources),
+            done,
+            seq: timeline,
+          });
+        }
+        if (
+          nested.type === "response.output_item.done" &&
+          nested.item?.type === "message"
+        ) {
+          const cited = citationsOf(nested.item.content);
+          if (cited.length) on.cited?.(id, cited);
+        }
+        if (
+          nested.type === "response.output_item.done" &&
+          nested.item?.type === "function_call"
+        ) {
+          const item = nested.item;
+          if (calls.has(item.call_id)) break;
+          calls.add(item.call_id);
+          // Cut off by the output cap: the arguments are a fragment, and Live ends the
+          // handoff with a top-level error, never a terminal event for this response.
+          // Calls it completed before the cut still ran, so their results are continued,
+          // under the same once-in-a-row bound as an incomplete response.
+          if (item.status === "incomplete") {
+            response.terminal = true;
+            logger.warn("Live backend call cut off; not run", {
+              responseId: id,
+              name: item.name,
+              arguments: item.arguments.slice(0, 200),
+            });
+            if (response.calls.size && !salvaging) {
+              salvaging = true;
+              void continueResponse(response);
+            } else {
+              // The row ends here, as a terminal event's does: left set, the next turn cut
+              // off was not continued, and its hand-over went unanswered
+              salvaging = false;
+              void endResponse(response);
+            }
+            break;
+          }
+          on.turn({
+            id: item.id,
+            role: "tool",
+            tool: item.name,
+            text: item.arguments,
+            seq: timeline,
+            done: true,
+          });
+          flushTranscripts();
+          tools.set(item.call_id, item.name);
+          const running = Promise.resolve()
+            .then(() =>
+              on.runTool({
+                id: item.call_id,
+                name: item.name,
+                arguments: item.arguments,
+                item: item.id,
+              }),
+            )
+            .catch((cause) => `Error: ${errorToString(cause)}`)
+            .then((output) => {
+              tools.delete(item.call_id);
+              if (!closed && !closing) sendOutput(item.call_id, output);
+              activity();
+            });
+          response.calls.set(item.call_id, running);
+          void continueResponse(response);
+        }
+        if (TERMINAL_EVENTS.includes(nested.type)) {
+          response.terminal = true;
+          response.stale = false;
+          if (nested.type === "response.completed") {
+            salvaging = false;
+            logger.debug("Live backend usage", {
+              responseId: id,
+              usage: nested.response?.usage,
+            });
+            void continueResponse(response);
+          } else if (
+            nested.type === "response.incomplete" &&
+            response.calls.size &&
+            !salvaging
+          ) {
+            // Cut off after asking for tools: its outputs still go in, and a turn
+            // left there never ends. One continuation only, so running out cannot loop.
+            salvaging = true;
+            logger.warn("Live backend response incomplete; continuing once", {
+              responseId: id,
+            });
+            void continueResponse(response);
+          } else {
+            salvaging = false;
+            void endResponse(response);
+            on.warn(
+              nested.response?.error?.message ??
+                `The Live backend ${nested.type.slice(9)}.`,
+            );
+          }
+        }
+        break;
+      }
+    }
+    activity();
+  };
+  const transport = createWebRtcTransport<LiveEvent, Record<string, unknown>>({
+    audio,
+    negotiate: async (sdp) => {
+      const answer = await initialize(sdp);
+      if (!(typeof answer === "string" ? answer : answer.sdp))
+        throw new Error("OpenAI Live returned no SDP answer.");
+      return answer;
+    },
+    on: { event: handle, dropped: fail },
+  });
+
+  return {
+    async connect() {
+      audio.element.muted = false;
+      const ready = new Promise<void>((resolve, reject) => {
+        resolveStarted = resolve;
+        rejectStarted = reject;
+      });
+      void ready.catch(() => {});
+      const timer = setTimeout(
+        () => fail("OpenAI Live did not start in time."),
+        LIVE_CALL.startupMs,
+      );
+      try {
+        await Promise.all([transport.connect(), ready]);
+        if (closed) throw new Error("The Live call closed during startup.");
+        activityTimer = setInterval(activity, 100);
+      } catch (cause) {
+        cleanup();
+        throw cause;
+      } finally {
+        clearTimeout(timer);
+        rejectStarted = undefined;
+      }
+    },
+    close() {
+      if (closePromise) return closePromise;
+      if (closed) return Promise.resolve();
+      closing = true;
+      flushTranscripts();
+      if (!started) {
+        cleanup();
+        return Promise.resolve();
+      }
+      closePromise = new Promise<void>((resolve) => {
+        resolveClosed = resolve;
+      });
+      closeTimer = setTimeout(() => {
+        on.warn("Live disconnected without confirming final session usage.");
+        cleanup();
+      }, LIVE_CALL.closeMs);
+      audio.element.muted = true;
+      // The close is confirmed by the far end, which may take until closeMs: the caller
+      // hung up now, so the microphone goes now
+      transport.hush();
+      transport.send({ type: "session.close", event_id: crypto.randomUUID() });
+      return closePromise;
+    },
+    /**
+     * Queues an update in order: `instructions` for trusted behaviour, `commentary`
+     * for something to convey, `thinking` for context that need not be spoken.
+     * Resolves true once Live acknowledged all of it — which is not proof it was
+     * spoken — and false when it was rejected, unacknowledged or the call closed.
+     */
+    append(kind: AppendKind, text: string): Promise<boolean> {
+      const chunks = appendChunks(text);
+      if (closed || closing || !chunks.length) return Promise.resolve(false);
+      return new Promise<boolean>((settle) => {
+        appends.push({ kind, chunks, settle });
+        appendNext();
+      });
+    },
+    /**
+     * Holds the caller's input off (`session.input_audio.mute`) until her first words or
+     * `ms`, whichever comes first — for an opening she is to speak first, which a room that
+     * is not silent kept her from (config LIVE_CALL.openingHoldMs). The session runs on and
+     * she speaks; only what the caller says meanwhile goes unheard.
+     */
+    holdInput(ms: number) {
+      // The plan's line takes no mute (live.plan): the room is heard from the start there
+      if (transport.relayed()) return;
+      if (!started || closed || closing || held || ms <= 0) return;
+      held = { mute: crypto.randomUUID(), unmute: null };
+      transport.send({ type: "session.input_audio.mute", event_id: held.mute });
+      holdTimer = setTimeout(letGo, ms);
+    },
+    pictureRoom,
+    /**
+     * Queues a fact for the backend alone. It starts no turn: it waits in the backend's
+     * conversation and is read with whatever the voice hands over next, and the voice,
+     * which may say aloud anything appended to it, never sees it. It goes in at once, or —
+     * while a turn of the backend's runs, waits on its tools, or was asked for and has not
+     * started — after that turn's outputs, in order with what else was put down (waitingOn).
+     * Live acknowledges no item; a
+     * refusal comes back as an `error`.
+     */
+    brief(text: string): void {
+      const fact = text.trim();
+      if (closed || closing || !fact) return;
+      const waiting = waitingOn();
+      if (waiting) waiting.held.push({ fact });
+      else sendFact(fact);
+    },
+    /**
+     * A picture kept at `path` (a data URL of it, made to fit `pictureRoom(path)`) into the
+     * backend's conversation, as the guide has an image reach it ("Add images and visual
+     * context"): at once, or after the outputs of the turn it would land in, as a brief goes.
+     * Like a brief it starts no turn.
+     */
+    picture(image: string, path: string): void {
+      if (closed || closing) return;
+      const waiting = waitingOn();
+      if (waiting) waiting.held.push({ image, path });
+      else sendImage({ image, path });
+    },
+    /**
+     * Runs the backend on what was put down, as the guide has it run on an image it was given
+     * ("then send response.create to run or resume backend work"), with no hand-over of the
+     * voice's: its answer comes back to the voice as a hand-over's does. At once while it is
+     * quiet; while a turn runs, once that turn's outputs and what waited on it are in — the
+     * turn goes on with them by itself, and one that has nothing to go on with is followed by
+     * the run.
+     */
+    run(): void {
+      if (closed || closing) return;
+      const waiting = waitingOn();
+      if (waiting) waiting.rerun = true;
+      else ask();
+      activity();
+    },
+  };
+};

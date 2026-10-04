@@ -1,0 +1,846 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* `.inverse` draws its contents in the other theme (the user's bubble in a thread): the tokens
+   swap on it, and `dark:` inside it follows that theme rather than the page's. */
+@custom-variant dark (&:is(.dark *, .inverse *):not(:where(.dark .inverse *)));
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* Neither Geist has CJK. The generic family ends each stack, so Hangul, kana and
+     Han fall to the OS's font for the reader's language, not one country's. */
+  --font-sans: var(--font-geist-sans), sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+  --font-heading: var(--font-sans);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand: var(--brand);
+  --color-waiting: var(--waiting);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/*
+ * The ladder, and what the app calls each step.
+ *
+ * `--gray-0` is the paper and `--gray-1000` the ink, in BOTH themes: one list of
+ * steps, read from the other end in the dark. A surface is named once and lands
+ * right in either, and `--gray-500` is the pivot the two share. A border or a
+ * hover is never a grey of its own — it is the ink at low opacity
+ * (`--alpha-*`), which is why it needs no second value for the dark.
+ *
+ * The steps are OpenAI's, from `@openai/apps-sdk-ui` 0.2.2 (MIT, Copyright 2025
+ * OpenAI), and so is the blue, as it is. What marks a failure is Tailwind's plain
+ * red, the one people already read as an error. What this app takes from that
+ * system is the arrangement: a role picks a hue and the theme picks only which
+ * step of it.
+ */
+:root,
+.dark .inverse {
+  --gray-0: #ffffff;
+  --gray-25: #fcfcfc;
+  --gray-50: #f9f9f9;
+  --gray-75: #f3f3f3;
+  --gray-100: #ededed;
+  --gray-150: #dfdfdf;
+  --gray-200: #cdcdcd;
+  --gray-250: #b9b9b9;
+  --gray-300: #afafaf;
+  --gray-350: #9f9f9f;
+  --gray-400: #8f8f8f;
+  --gray-450: #767676;
+  --gray-500: #5d5d5d;
+  --gray-550: #4f4f4f;
+  --gray-600: #414141;
+  --gray-650: #393939;
+  --gray-700: #303030;
+  --gray-750: #282828;
+  --gray-800: #212121;
+  --gray-850: #1c1c1c;
+  --gray-900: #181818;
+  --gray-925: #161616;
+  --gray-950: #131313;
+  --gray-975: #101010;
+  --gray-1000: #0d0d0d;
+  --ink: #0d0d0d;
+}
+
+.dark,
+:root:not(.dark) .inverse {
+  --gray-0: #0d0d0d;
+  --gray-25: #101010;
+  --gray-50: #131313;
+  --gray-75: #161616;
+  --gray-100: #181818;
+  --gray-150: #1c1c1c;
+  --gray-200: #212121;
+  --gray-250: #282828;
+  --gray-300: #303030;
+  --gray-350: #393939;
+  --gray-400: #414141;
+  --gray-450: #4f4f4f;
+  --gray-500: #5d5d5d;
+  --gray-550: #767676;
+  --gray-600: #8f8f8f;
+  --gray-650: #9f9f9f;
+  --gray-700: #afafaf;
+  --gray-750: #b9b9b9;
+  --gray-800: #cdcdcd;
+  --gray-850: #dfdfdf;
+  --gray-900: #ededed;
+  --gray-925: #f3f3f3;
+  --gray-950: #f9f9f9;
+  --gray-975: #fcfcfc;
+  --gray-1000: #ffffff;
+  --ink: #ffffff;
+}
+
+/* Resolved on whichever element carries the ladder, so `.inverse` gets its own. */
+:root,
+.dark,
+.inverse {
+  --alpha-05: color-mix(in oklab, var(--ink) 5%, transparent);
+  --alpha-08: color-mix(in oklab, var(--ink) 8%, transparent);
+  --alpha-10: color-mix(in oklab, var(--ink) 10%, transparent);
+  --alpha-12: color-mix(in oklab, var(--ink) 12%, transparent);
+  --alpha-15: color-mix(in oklab, var(--ink) 15%, transparent);
+  --alpha-20: color-mix(in oklab, var(--ink) 20%, transparent);
+
+  /* Written once: the same distance from the paper means the same in either theme. */
+  --background: var(--gray-0);
+  --foreground: var(--gray-1000);
+  --card-foreground: var(--gray-1000);
+  --popover-foreground: var(--gray-1000);
+  --primary: var(--gray-900);
+  --primary-foreground: var(--gray-0);
+  --secondary-foreground: var(--gray-900);
+  --accent-foreground: var(--gray-900);
+  --border: var(--alpha-10);
+
+  --radius: 0.625rem;
+}
+
+/*
+ * The rest is not symmetric, because the eye is not: a card lifts off a white
+ * page by its shadow and off a black one by being lighter, and the grey that
+ * reads as "quiet" sits nearer the paper in the dark. Each names a step.
+ */
+:root,
+.dark .inverse {
+  --card: var(--gray-0);
+  --popover: var(--gray-0);
+  --secondary: var(--gray-75);
+  --muted: var(--gray-75);
+  --accent: var(--gray-75);
+  --muted-foreground: var(--gray-450);
+  --input: var(--alpha-10);
+  --ring: var(--gray-300);
+
+  --brand: #0169cc; /* blue-500 */
+  --brand-foreground: #ffffff;
+  --destructive: #dc2626; /* Tailwind red-600 */
+  --waiting: #c43d18; /* ember: red-600 and orange-700, halfway */
+}
+
+.dark,
+:root:not(.dark) .inverse {
+  --card: var(--gray-100);
+  --popover: var(--gray-100);
+  --secondary: var(--gray-250);
+  --muted: var(--gray-250);
+  --accent: var(--gray-250);
+  --muted-foreground: var(--gray-650);
+  --input: var(--alpha-15);
+  --ring: var(--gray-500);
+
+  --brand: #0a84ff; /* the iOS dark system blue: the vivid end that still clears 4.5:1 on this paper */
+  --brand-foreground: #ffffff;
+  --destructive: #ef4444; /* Tailwind red-500 */
+  --waiting: #ff7a55; /* the same ember, at the step this paper needs */
+}
+
+/*
+ * What waits on the user is a warm of its own: an ember, at the step each theme needs for small
+ * text to clear 4.5:1. It is told from what failed by hue and by shape: the warm is a dot on a
+ * face, a count, a word with its glyph; red is an error's own words. Written per theme beside the
+ * brand.
+ */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+
+  button {
+    @apply cursor-pointer;
+  }
+}
+
+/* The one motion a running tool has (thursday.tsx Activity): a brighter copy of
+   the tool's own glyph filled in from the top, then let go. It replaces the
+   spinner that used to stand where the glyph belongs, so what is running is
+   still readable while it runs. */
+@theme {
+  --animate-ink: ink 1.9s ease-in-out infinite;
+
+  @keyframes ink {
+    0% {
+      clip-path: inset(0 0 100% 0);
+      opacity: 1;
+    }
+    55% {
+      clip-path: inset(0 0 0 0);
+      opacity: 1;
+    }
+    100% {
+      clip-path: inset(0 0 0 0);
+      opacity: 0;
+    }
+  }
+}
+
+/* ShinyText's sweep: the band's window crosses the words from left to right and
+   starts over, the words inside it moving back as far so they hold still. Moved,
+   not repainted, so it runs on however busy the page is. The component sets the
+   duration from its `speed`. */
+@theme {
+  --animate-shine: shine 2.4s linear infinite;
+  --animate-shine-back: shine-back 2.4s linear infinite;
+
+  @keyframes shine {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes shine-back {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(-100%);
+    }
+  }
+}
+
+/* A caption's letter arriving (letters.tsx): out of a blur, into
+   place. `backwards` keeps it unseen while it waits its turn and lets go once
+   it has arrived, so no letter holds a filter after that. */
+@theme {
+  --animate-letter: letter 0.4s ease-out backwards;
+
+  @keyframes letter {
+    from {
+      opacity: 0;
+      filter: blur(6px);
+    }
+  }
+}
+
+/* A load whose script never runs — a chunk that did not arrive, a dev server
+   restarted mid-load — looks fine and does nothing, since her face is a canvas and
+   every control is the client's. The line that says so (boot.tsx) is drawn on the
+   server, taken away only by the client, and revealed by CSS alone, long after any
+   healthy start. */
+@theme {
+  --animate-stalled: stalled 0.5s ease-out 6s forwards;
+
+  @keyframes stalled {
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+/* The crew's body language (features/bot/components/crew-motion.ts, which names which layer takes
+   which of these). A jump only reads as weight if the body and the shape are on different curves —
+   the body slows going up and speeds up coming down, the shape presses before the push and
+   flattens on contact — so a face is a stack of layers and each of these animates one of them.
+   Keyframes carry their own easing, which is what lets one animation change curve at each beat. */
+@theme {
+  /* Resting. Every face carries it, each on its own phase, and a gesture takes the layer over. */
+  --animate-crew-breath: crew-breath 2.6s ease-in-out infinite;
+
+  @keyframes crew-breath {
+    0%,
+    100% {
+      transform: scale(1, 1);
+    }
+    50% {
+      transform: scale(0.985, 1.025);
+    }
+  }
+}
+
+/* The jump every gesture is built from: gather, push, rise, fall, land, rebound, settle. */
+@theme {
+  --animate-crew-hop: crew-hop 0.74s both;
+  --animate-crew-hop-shape: crew-hop-shape 0.74s both;
+  --animate-crew-spin: crew-spin 0.74s cubic-bezier(0.3, 0, 0.35, 1) both;
+
+  @keyframes crew-hop {
+    0% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.25, 0, 0.2, 1);
+    }
+    16.2% {
+      transform: translateY(1.5px);
+      animation-timing-function: cubic-bezier(0.08, 0.62, 0.3, 1);
+    }
+    24.3% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.1, 0.6, 0.3, 1);
+    }
+    48.6% {
+      transform: translateY(-15px);
+      animation-timing-function: cubic-bezier(0.72, 0, 0.9, 0.42);
+    }
+    71.6%,
+    79.7% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.2, 0.82, 0.4, 1);
+    }
+    89.2% {
+      transform: translateY(-3px);
+      animation-timing-function: cubic-bezier(0.45, 0, 0.5, 1);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes crew-hop-shape {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.35, 0, 0.3, 1);
+    }
+    16.2% {
+      transform: scale(1.15, 0.81);
+      animation-timing-function: cubic-bezier(0.2, 0.9, 0.4, 1);
+    }
+    24.3% {
+      transform: scale(0.89, 1.19);
+      animation-timing-function: ease-out;
+    }
+    37% {
+      transform: scale(1, 1);
+      animation-timing-function: ease-in;
+    }
+    62% {
+      transform: scale(0.94, 1.08);
+      animation-timing-function: linear;
+    }
+    71.6% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.25, 0.9, 0.4, 1);
+    }
+    79.7% {
+      transform: scale(1.26, 0.73);
+      animation-timing-function: cubic-bezier(0.25, 0.9, 0.4, 1);
+    }
+    89.2% {
+      transform: scale(0.94, 1.09);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+    }
+    95% {
+      transform: scale(1.04, 0.97);
+    }
+    100% {
+      transform: scale(1, 1);
+    }
+  }
+
+  /* Finished: the turn happens only while the feet are off the ground, so it lands straight. */
+  @keyframes crew-spin {
+    0%,
+    24.3% {
+      transform: rotate(0deg);
+    }
+    71.6%,
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+}
+
+/* Asks you: the jump above, with the head going over and coming back in the air. */
+@theme {
+  --animate-crew-ask-turn: crew-ask-turn 0.82s both;
+
+  @keyframes crew-ask-turn {
+    0% {
+      transform: rotate(0deg);
+      animation-timing-function: cubic-bezier(0.2, 0.85, 0.35, 1);
+    }
+    31.7% {
+      transform: rotate(-15deg);
+      animation-timing-function: cubic-bezier(0.35, 0, 0.3, 1);
+    }
+    53.7% {
+      transform: rotate(13deg);
+      animation-timing-function: cubic-bezier(0.35, 0, 0.3, 1);
+    }
+    73.2% {
+      transform: rotate(-6deg);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+    }
+    100% {
+      transform: rotate(0deg);
+    }
+  }
+}
+
+/* Handed work over: the giver turns to whoever it reached and holds there a moment. */
+@theme {
+  --animate-crew-give: crew-give 0.9s both;
+
+  @keyframes crew-give {
+    0% {
+      transform: rotate(0deg) translateX(0);
+      animation-timing-function: cubic-bezier(0.2, 0.85, 0.35, 1);
+    }
+    22.2%,
+    72.2% {
+      transform: rotate(12deg) translateX(1.5px);
+      animation-timing-function: cubic-bezier(0.35, 0, 0.35, 1);
+    }
+    100% {
+      transform: rotate(0deg) translateX(0);
+    }
+  }
+}
+
+/* Took work from another bot: a small hop back, a beat after the giver turns. */
+@theme {
+  --animate-crew-take: crew-take 0.52s both;
+  --animate-crew-take-shape: crew-take-shape 0.52s both;
+
+  @keyframes crew-take {
+    0% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.25, 0, 0.2, 1);
+    }
+    11.5% {
+      transform: translateY(1.5px);
+      animation-timing-function: cubic-bezier(0.1, 0.6, 0.3, 1);
+    }
+    40.4% {
+      transform: translateY(-9px);
+      animation-timing-function: cubic-bezier(0.72, 0, 0.9, 0.42);
+    }
+    80.8%,
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes crew-take-shape {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.3, 0, 0.3, 1);
+    }
+    11.5% {
+      transform: scale(1.12, 0.85);
+      animation-timing-function: cubic-bezier(0.2, 0.9, 0.4, 1);
+    }
+    21.2% {
+      transform: scale(0.92, 1.12);
+      animation-timing-function: ease-out;
+    }
+    40.4% {
+      transform: scale(1, 1);
+      animation-timing-function: ease-in;
+    }
+    80.8% {
+      transform: scale(1.18, 0.8);
+      animation-timing-function: cubic-bezier(0.25, 0.9, 0.4, 1);
+    }
+    92% {
+      transform: scale(0.96, 1.05);
+    }
+    100% {
+      transform: scale(1, 1);
+    }
+  }
+}
+
+/* Stopped: it sinks and stays flattened for most of a second. The one gesture that does not
+   bounce back, so a stop never reads as good news. */
+@theme {
+  --animate-crew-sink: crew-sink 1.15s both;
+  --animate-crew-sink-shape: crew-sink-shape 1.15s both;
+
+  @keyframes crew-sink {
+    0% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.3, 1);
+    }
+    17.4%,
+    69.6% {
+      transform: translateY(2px);
+      animation-timing-function: cubic-bezier(0.3, 0.8, 0.4, 1);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes crew-sink-shape {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.25, 1);
+    }
+    17.4%,
+    69.6% {
+      transform: scale(1.13, 0.85);
+      animation-timing-function: cubic-bezier(0.3, 0.85, 0.4, 1);
+    }
+    87% {
+      transform: scale(0.98, 1.02);
+    }
+    100% {
+      transform: scale(1, 1);
+    }
+  }
+}
+
+/* Read what you stepped in with: two nods in place, the second smaller. It never leaves the row. */
+@theme {
+  --animate-crew-nod: crew-nod 0.56s both;
+  --animate-crew-nod-shape: crew-nod-shape 0.56s both;
+
+  @keyframes crew-nod {
+    0% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
+    }
+    21.4% {
+      transform: translateY(1.5px);
+      animation-timing-function: cubic-bezier(0.3, 0.8, 0.4, 1);
+    }
+    50% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
+    }
+    71.4% {
+      transform: translateY(1px);
+      animation-timing-function: cubic-bezier(0.3, 0.8, 0.4, 1);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes crew-nod-shape {
+    0% {
+      transform: scale(1, 1);
+      animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
+    }
+    21.4% {
+      transform: scale(1.11, 0.86);
+      animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1);
+    }
+    50% {
+      transform: scale(0.97, 1.04);
+      animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
+    }
+    71.4% {
+      transform: scale(1.07, 0.92);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+    }
+    100% {
+      transform: scale(1, 1);
+    }
+  }
+}
+
+/* A laptop in the office (features/bot/office.scene.ts laptopFor): its lid, and its screen lit
+   while its bot works, dim while it waits, dark when stopped. The lit screen is the brightest
+   thing on a desk in either theme. */
+:root,
+.dark .inverse {
+  --office-lid: var(--gray-750);
+  --office-lid-side: var(--gray-700);
+  --office-lid-top: var(--gray-650);
+  --office-screen-lit: var(--gray-0);
+  --office-screen-dim: var(--gray-450);
+  --office-screen-dark: var(--gray-750);
+  --office-screen-line: color-mix(in oklab, var(--ink) 55%, transparent);
+}
+
+.dark,
+:root:not(.dark) .inverse {
+  --office-lid: var(--gray-200);
+  --office-lid-side: var(--gray-150);
+  --office-lid-top: var(--gray-250);
+  --office-screen-lit: var(--gray-1000);
+  --office-screen-dim: var(--gray-450);
+  --office-screen-dark: var(--gray-100);
+  --office-screen-line: color-mix(in oklab, var(--gray-0) 60%, transparent);
+}
+
+/* The office (features/bot/components/office-stage.tsx) builds itself as it opens, in one wave
+   from the ground up and from its back to its front: each piece drops a little and settles, then
+   the bots pop up and the rest fades in. Each piece sets its own delay; the classes act only while
+   the stage carries `data-building`. */
+@theme {
+  --animate-office-drop: office-drop 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  --animate-office-pop: office-pop 0.36s cubic-bezier(0.3, 0.7, 0.3, 1) both;
+  --animate-office-fade: office-fade 0.4s ease both;
+  --animate-office-sign: office-sign 0.5s cubic-bezier(0.2, 0.8, 0.3, 1)
+    backwards;
+  --animate-office-tape: office-tape 1.4s linear infinite;
+  --animate-office-work: office-work 1.6s ease-in-out infinite;
+  --animate-office-screen: office-screen 0.9s steps(4, end) infinite;
+  --animate-office-plate: office-plate 160ms cubic-bezier(0.2, 0.7, 0.3, 1)
+    backwards;
+  --animate-office-ask: office-ask 700ms 160ms ease-out both;
+  --animate-office-card-up: office-card-up 220ms cubic-bezier(0.2, 0.7, 0.3, 1)
+    backwards;
+  --animate-office-card-down: office-card-down 220ms
+    cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  --animate-office-sign-out: office-sign-out 200ms ease-in both;
+  --animate-office-tape-out: office-tape-out 380ms
+    cubic-bezier(0.5, 0, 0.7, 0.4) both;
+  --animate-office-paint: office-paint 600ms 180ms
+    cubic-bezier(0.3, 0.6, 0.3, 1) backwards;
+  --animate-office-sink: office-sink 220ms ease-in both;
+  --animate-office-rise: office-rise 300ms 120ms cubic-bezier(0.2, 0.7, 0.3, 1)
+    both;
+
+  @keyframes office-drop {
+    from {
+      transform: translateY(-22px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  @keyframes office-pop {
+    0% {
+      transform: scale(0.2);
+      opacity: 0;
+    }
+    65% {
+      transform: scale(1.1);
+      opacity: 1;
+    }
+    100% {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  @keyframes office-fade {
+    from {
+      opacity: 0;
+    }
+  }
+
+  /* The sign's words coming onto the ground as the job's state changes: up out of it, fading in. */
+  @keyframes office-sign {
+    from {
+      transform: translateY(16px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+    }
+  }
+
+  /*
+   * The tape's stripes running while the job is at work, moved rather than repainted so they run
+   * on however busy the page is: one repeat of its 18px + 18px stripes at -45deg, 36px x sqrt 2.
+   */
+  @keyframes office-tape {
+    from {
+      transform: none;
+    }
+    to {
+      transform: translateX(50.91px);
+    }
+  }
+
+  /* A bot at work at its desk: rocking a little over its keys; its screen says the rest. */
+  @keyframes office-work {
+    0%,
+    100% {
+      transform: none;
+    }
+    30% {
+      transform: translateY(-5%) rotate(-2deg);
+    }
+    65% {
+      transform: translateY(-3%) rotate(2deg);
+    }
+  }
+
+  /* The lines on a working laptop's screen running up, a line at a time (office-stage ScreenShape). */
+  @keyframes office-screen {
+    to {
+      transform: translateY(-0.9px);
+    }
+  }
+
+  /* A plate coming up out of its bot's head. */
+  @keyframes office-plate {
+    from {
+      transform: scale(0.92);
+      opacity: 0;
+    }
+  }
+
+  /* A plate that has just come to want the user rings once, not on and on: a ring of its own
+     spreading from the plate's, which stays as it is. */
+  @keyframes office-ask {
+    from {
+      box-shadow: 0 0 0 0 color-mix(in oklab, var(--waiting) 45%, transparent);
+    }
+    to {
+      box-shadow: 0 0 0 9px color-mix(in oklab, var(--waiting) 0%, transparent);
+    }
+  }
+
+  /* A bot's words opening out of its plate: above it, or below it for the report at your counter. */
+  @keyframes office-card-up {
+    from {
+      clip-path: inset(
+        calc(100% - 26px) calc(50% - 60px) 0 calc(50% - 60px) round 13px
+      );
+      opacity: 0.6;
+    }
+    to {
+      clip-path: inset(0 round 16px);
+    }
+  }
+  @keyframes office-card-down {
+    from {
+      clip-path: inset(0 0 calc(100% - 26px) calc(100% - 120px) round 13px);
+      opacity: 0.6;
+    }
+    to {
+      clip-path: inset(0 round 16px);
+    }
+  }
+
+  /* The ground's words going as the job's state changes: capitals sink, the tape rolls up, and
+     DONE is painted on from its left. */
+  @keyframes office-sign-out {
+    to {
+      transform: translateY(14px);
+      opacity: 0;
+    }
+  }
+  @keyframes office-tape-out {
+    to {
+      transform: scaleX(0);
+    }
+  }
+  @keyframes office-paint {
+    from {
+      clip-path: inset(0 100% 0 0);
+    }
+    to {
+      clip-path: inset(0 0 0 0);
+    }
+  }
+
+  /* Another thread's office taking this one's place: the old sinks and goes, the new rises. */
+  @keyframes office-sink {
+    to {
+      transform: translateY(10px);
+      opacity: 0;
+    }
+  }
+  @keyframes office-rise {
+    from {
+      transform: translateY(8px);
+      opacity: 0;
+    }
+  }
+}
+
+[data-building] .office-drop {
+  animation: var(--animate-office-drop);
+}
+[data-building] .office-pop {
+  animation: var(--animate-office-pop);
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+[data-building] .office-fade {
+  animation: var(--animate-office-fade);
+}
+
+/* A seat's tick drawn in as it turns done (office-stage StateGlyph). */
+@keyframes office-check {
+  from {
+    stroke-dashoffset: 14;
+  }
+}
+.office-check path {
+  stroke-dasharray: 14;
+  animation: office-check 240ms ease-out both;
+}
+
+/* Every one of them is a courtesy, so a machine asked to hold still keeps the faces where they are. */
+@media (prefers-reduced-motion: reduce) {
+  [data-crew-motion],
+  [data-building] .office-drop,
+  [data-building] .office-pop,
+  [data-building] .office-fade,
+  .animate-office-sign,
+  .animate-office-tape,
+  .animate-office-work,
+  .animate-office-screen,
+  .animate-office-plate,
+  .animate-office-ask,
+  .animate-office-card-up,
+  .animate-office-card-down,
+  .animate-office-sign-out,
+  .animate-office-tape-out,
+  .animate-office-paint,
+  .animate-office-sink,
+  .animate-office-rise,
+  .office-check path {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,71 @@
+---
+name: artifact
+description: "Makes what the user keeps or uses: a document, canvas, deck, motion video, sheet, page or app. Use it for a report or memo, options or a mockup at real size, slides to present or to explain one thing a picture at a time, read aloud or as a PDF, a short hand-drawn film for a birthday, a thank-you or a small story, an Excel sheet or reading one, a tool such as a calculator or a tracker, numbers as a chart, or a diagram of how something is built."
+license: Complete terms in LICENSE.txt
+---
+
+# Artifact
+
+What the user keeps, looks at or uses. Every kind is one file in your folder under `artifacts/`
+that opens with no network, and its path is what you hand back. `S=<skill dir>/scripts`
+
+## To keep and look at
+
+Drawn by the app from what you write. You write the content; the app does the rest — the layout,
+the type, light and dark, a head that names it with Export (and Edit on a deck or a sheet; a
+document is edited by clicking into it), and the pictures.
+
+| They will | Kind | Start | Read first |
+|---|---|---|---|
+| read it — a report, a memo, options compared, a plan, notes of a meeting, research with its photos; or a Word file of it | document | write Markdown, then `node $S/document.mjs put <name> <file.md>`; a .docx: `document.mjs docx <name>`; a PDF: `document.mjs pdf <name>` | `references/document.md` |
+| choose between ways something could look, or see it at its real size — an app or phone screen, a landing page, a poster, a post | canvas | `node $S/canvas.mjs new <name>` | `references/canvas.md`, then `references/craft.md` |
+| watch it presented, or understand one thing simply — a picture and a line or two a slide; as a PDF, or a video that reads itself | deck | the `make_deck` tool; then `node $S/deck.mjs pdf <deck>` or `deck.mjs video <deck> <audio>…` | `references/deck.md` |
+| watch a short hand-drawn film — a birthday or anniversary gift, a thank-you, a farewell, a small story, with music | motion video | write the film as code with the kit, from `templates/motion/birthday.js`, then `node $S/motion.mjs put <name> <film.js>` | `references/motion.md` |
+
+- **Write the content, never the file around it.** Each script makes its file and puts what you
+  wrote into it; a file you write whole yourself loses its head, its editing and its check.
+- **A name is yours, a path is anyone's.** A name reaches only your own folder; a document, canvas
+  or deck another bot handed you is reached by its path.
+- **Change what exists by getting it first.** The user may have edited it in the app since you
+  made it. `get` it into a file, change that, `put` it back: `put` refuses to undo their edits.
+
+## To use
+
+Built whole by you, with no head from the app and no Edit: a page someone reads and edits is a
+document.
+
+| They will | Kind | Start | Read first |
+|---|---|---|---|
+| keep working on numbers — a ledger, a budget, a list of clients, results by month; or read an .xlsx they gave you | sheet | `node $S/spreadsheet.mjs put <name> <book.json or data.csv>` | `references/sheet.md` |
+| use a small tool — a calculator, a converter, a checklist that remembers | page | one HTML file you write whole, its `<style>` and `<script>` inside it | `references/app.md` |
+| use an app — screens, state that builds up, forms, charts that respond | app | `node $S/app.mjs new <name>`, write it in React, `build` it | `references/app.md` |
+| see how something is built or flows — a system, a process, calls in order | diagram | the archify engine in `$S/archify` | `references/diagram.md` |
+
+## Charts
+
+Numbers they should see are a chart, drawn into the document or page that carries them:
+`node $S/chart.mjs <file.html> <figure id> <data.csv>`; on a slide, a board or a post, it is a
+picture: `node $S/chart.mjs <picture.svg> <data.csv>`. A line, bars, upright columns, a donut or
+stacked bars (`--kind`; no arguments lists every option). Never hand-write chart SVG.
+
+A few paragraphs that answer a question stay your final text; a kind here is for what they will
+keep, share, use or come back to.
+
+## For every kind
+
+- **Nothing invented.** A figure, a price, a quote or a date you were not given is a visible blank,
+  `[PRICE]`, for them to fill — never a plausible one.
+- **Pictures come off the pages you read.** `node $THURSDAY_SKILLS/browser/scripts/webimage.mjs
+  <page url> --out <the folder beside the file>` saves a page's own picture with its credit line.
+- **Look once where the look is the work.** A canvas and a motion video come back as one
+  picture of every board or scene (`shots`, then `look_at`), and `make_deck` hands back every
+  slide on one: fix what it refuses or marks as cut, two rounds at most. A document is drawn by
+  the app from what you wrote, so it goes back without a second look. A page, an app or a diagram is looked at only when asked, with
+  `node $S/document.mjs shots <its path>`: an app's build and a diagram's check already name
+  what is broken.
+- **A PDF of a page made to be read** — a document, a brief, a trip, a digest — is
+  `node $S/document.mjs pdf <its path>`, beside it; a deck's is `deck.mjs pdf`. A page sent to
+  their phone already goes with its PDF.
+- **Hand back** the file's path — a canvas with its pictures' paths, a deck or a motion video
+  with its mp4 when there is one — and say in a line or two what it holds and what you would do
+  next with it.

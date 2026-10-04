@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+/**
+ * A folder served to this machine alone, on a port the system picks: the browser refuses
+ * `file:` addresses, and a fixed port lets two jobs reach each other's pages.
+ *
+ *   node serve.mjs <dir>     prints the folder's address, and serves until it is stopped
+ *
+ * A script imports `serveFolder(dir)` instead: it resolves to the port, the address of a
+ * file in the folder, and a close. `{ instead: { [path]: text } }` serves that text in place
+ * of the file on disk, which is how render.mjs shows a page in its shot mode without a copy.
+ * `{ take: <dir> }` lets the page hand files back: a POST to `/__take/<name>` writes its body
+ * to `<dir>/<name>`, which is how motion.mjs takes a film's frames faster than screenshots.
+ */
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  statSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".pdf": "application/pdf",
+};
+
+/** Serves `dir` on 127.0.0.1; nothing outside it is ever answered. */
+export async function serveFolder(dir, { instead = {}, take = null } = {}) {
+  const root = resolve(dir);
+  const given = new Map(
+    Object.entries(instead).map(([path, text]) => [resolve(root, path), text]),
+  );
+  const server = createServer((req, res) => {
+    if (take && req.method === "POST" && req.url.startsWith("/__take/")) {
+      // A name alone, never a path: nothing is written outside `take`
+      let name = "";
+      try {
+        name = basename(decodeURIComponent(req.url.slice(8)));
+      } catch {}
+      if (!/^[\w.-]+$/.test(name) || /^\.+$/.test(name)) {
+        res.writeHead(400).end();
+        return;
+      }
+      const out = createWriteStream(join(take, name));
+      req.pipe(out);
+      out.on("finish", () => res.writeHead(204).end());
+      out.on("error", () => res.writeHead(500).end());
+      return;
+    }
+    let path;
+    try {
+      path = resolve(
+        root,
+        `.${decodeURIComponent(new URL(req.url, "http://x").pathname)}`,
+      );
+    } catch {
+      res.writeHead(400).end();
+      return;
+    }
+    if (path === root && existsSync(resolve(root, "index.html")))
+      path = resolve(root, "index.html");
+    if (
+      !path.startsWith(root + sep) ||
+      !existsSync(path) ||
+      statSync(path).isDirectory()
+    ) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, {
+      "content-type":
+        TYPES[extname(path).toLowerCase()] ?? "application/octet-stream",
+    });
+    if (given.has(path)) res.end(given.get(path));
+    else createReadStream(path).pipe(res);
+  });
+  // Port 0: the system picks a free one
+  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+  const { port } = server.address();
+  return {
+    port,
+    /** The address of `file`, a path inside the folder. */
+    url: (file = "") =>
+      `http://127.0.0.1:${port}/${relative(root, resolve(root, file))
+        .split(sep)
+        .map(encodeURIComponent)
+        .join("/")}`,
+    close: () => server.close(),
+  };
+}
+
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const dir = process.argv[2];
+  if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
+    process.stderr.write("usage: node serve.mjs <dir>\n");
+    process.exit(1);
+  }
+  const served = await serveFolder(dir);
+  console.log(`${served.url()} serves ${resolve(dir)} until this is stopped.`);
+}

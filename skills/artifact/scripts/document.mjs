@@ -1,0 +1,321 @@
+#!/usr/bin/env node
+// A document to read, as one HTML file in the bot's artifacts folder: the document's
+// stylesheet and script inlined, its body written in Markdown (or HTML) and put into it,
+// its head the shell every page the app makes wears. No build, no install.
+//
+//   node document.mjs new <name> [--from <kind>]
+//                                   the document, styled, laid out as a ready kind
+//                                   (runtime/document/pages: report, memo, comparison,
+//                                   plan, notes) or blank; `quick` is the same command
+//   node document.mjs put <name|path> <file.md|file.html>
+//                                   the body written in <file> into that document: Markdown
+//                                   is turned into the document's own markup
+//   node document.mjs get <name|path> <file>
+//                                   the body as it is now, as HTML, into <file> to change
+//   node document.mjs shots <name|path>
+//                                   the page as it opens, down to three pictures in scratch/
+//   node document.mjs pdf <name|path>
+//                                   the page as a PDF beside it (<name>.pdf), by its own
+//                                   print rules: a document, or any page made to be read
+//                                   (a brief, a trip, a digest)
+//   node document.mjs docx <name|path>
+//                                   the page as a Word file beside it (<name>.docx), edits
+//                                   and all, as Export › Word file makes it
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { documentBody, documentLang } from "../runtime/document/markdown.mjs";
+import {
+  editedSince,
+  getBetween,
+  keep,
+  notInside,
+  putBetween,
+} from "../runtime/shell/put.mjs";
+import { retitle, wear } from "../runtime/shell/wear.mjs";
+import {
+  ARTIFACTS,
+  NAME,
+  Stop,
+  shown,
+  WORKSPACE,
+} from "../runtime/shell/workspace.mjs";
+
+const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/** The mark a page made to be read carries in its head (shell head.html), a deck's size in it. */
+const PRINTS = /<meta name="print" content="pdf(?: (\d+x\d+))?">/;
+const MARK = '<meta name="print" content="pdf">';
+const SCRIPT = join(SKILL, "scripts", "document.mjs");
+
+/**
+ * A page with nothing to build: one HTML file in the bot's artifacts folder, the quick
+ * stylesheet and script inlined, its body a ready document (`--from`) or blank until a
+ * body is put into it. No kit is installed for it. Returns the file it wrote.
+ */
+function makePage(name, ...args) {
+  if (!name || !NAME.test(name))
+    throw new Stop(
+      `${name ? `"${name}" is not` : "Give"} a page name: letters, numbers, - and _ only.`,
+    );
+  const quick = join(SKILL, "runtime", "document");
+  const kinds = readdirSync(join(quick, "pages"))
+    .filter((file) => file.endsWith(".html"))
+    .map((file) => file.slice(0, -5));
+  const at = args.indexOf("--from");
+  const kind = at === -1 ? "blank" : (args[at + 1] ?? "");
+  if (!kinds.includes(kind))
+    throw new Stop(
+      `No ready document "${kind}": --from takes one of ${kinds.filter((k) => k !== "blank").join(", ")}.`,
+    );
+  const out = join(ARTIFACTS, `${name}.html`);
+  if (existsSync(out))
+    throw new Stop(`${shown(out)} already exists. Edit it there.`);
+  const part = (path) => readFileSync(join(quick, path), "utf8").trim();
+  // A ready document is dated: today, so a date left as it came is at least the right one,
+  // written as this computer writes dates
+  const today = new Date().toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(
+    out,
+    wear(
+      part("quick.html")
+        .replace("{{body}}", () => part(join("pages", `${kind}.html`)))
+        .replace("{{css}}", () => part("quick.css"))
+        .replace("{{js}}", () => `${part("quick.js")}\n${part("docx.js")}`)
+        .replaceAll("{{title}}", name)
+        .replaceAll("{{today}}", today),
+    ),
+  );
+  return { out, kind };
+}
+
+function newPage(name, ...args) {
+  const { out, kind } = makePage(name, ...args);
+  console.log(
+    `${shown(out)} is ready: one file that opens offline, styled already${kind === "blank" ? "" : `, laid out as a ${kind}`}. Write its body in Markdown in a file of your own${kind === "blank" ? "" : `, starting from ${join(SKILL, "templates", "document", `${kind}.md`)}`}, then run: node ${SCRIPT} put ${name} <that file.md> — and hand back this path.`,
+  );
+}
+
+/** A page in the bot's artifacts folder by name, or any page by its path. */
+function pageAt(arg) {
+  if (!arg) throw new Stop("Give a page name, or the path to one.");
+  const file =
+    !arg.includes("/") && !arg.endsWith(".html")
+      ? join(ARTIFACTS, `${arg}.html`)
+      : resolve(arg);
+  if (!existsSync(file))
+    throw new Stop(
+      `No page ${shown(file)}. Start one with: node ${SCRIPT} new <name>, or give the path to one that exists.`,
+    );
+  return file;
+}
+
+/**
+ * What a document calls itself: the words of its first heading, tags taken out. The file
+ * is named for the page before its body is written, and a tab reading the file's name
+ * for a title reads as unfinished.
+ */
+function headingOf(body) {
+  const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(body)?.[1] ?? "";
+  return h1
+    .replace(/<[^>]*>/g, "")
+    .replace(
+      /&(amp|lt|gt|quot|#39);/g,
+      (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e],
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The body written in `from` in place of the document's own, and nothing else of it touched.
+ * A name with no document yet makes one first, so writing Markdown and putting it is the
+ * whole of a new document.
+ */
+function putBody(name, from) {
+  if (!from || !existsSync(from))
+    throw new Stop(
+      `Give the file the body is written in: node ${SCRIPT} put ${name ?? "<name>"} <file.md>`,
+    );
+  const fresh =
+    name && NAME.test(name) && !existsSync(join(ARTIFACTS, `${name}.html`));
+  if (fresh) makePage(name);
+  const file = pageAt(name);
+  const written = readFileSync(from, "utf8");
+  const markdown = /\.(md|markdown)$/i.test(from);
+  const body = markdown ? documentBody(written) : written;
+  const lang = markdown ? documentLang(written) : null;
+  const why = notInside(body);
+  if (why) throw new Stop(`${from} ${why}: the document's body alone.`);
+  const page = readFileSync(file, "utf8");
+  if (editedSince(page))
+    throw new Stop(
+      `${shown(file)} was edited since you last put it — in the app, or by hand — and your file would undo that. Get it as it is now (node ${SCRIPT} get ${name} <file>), make your change in that file, and put that.`,
+    );
+  const put = putBetween(page, body);
+  if (!put) throw unmarked(file);
+  const title = headingOf(body);
+  // A document made before the mark gains it here, beside the shell's own meta, so it prints
+  const marked = PRINTS.test(put)
+    ? put
+    : put.replace(/(<meta name="revision" content="[^"]*">)/, `$1\n${MARK}`);
+  const titled = title ? retitle(marked, title) : marked;
+  // The language it said it is written in, which the page's own head cannot know
+  const html = lang
+    ? titled.replace(/<html\b[^>]*>/i, `<html lang="${lang}">`)
+    : titled;
+  keep(file, html);
+  console.log(
+    `The body is in ${shown(file)}. Hand back this path; to see it as it opens: node ${SCRIPT} shots ${name}`,
+  );
+}
+
+/** The document's body as it stands in the page, into `to`, for a put that keeps what was edited. */
+function getBody(name, to) {
+  const file = pageAt(name);
+  if (!to)
+    throw new Stop(
+      `Give the file to write the body into: node ${SCRIPT} get ${name ?? "<name>"} <file>`,
+    );
+  const got = getBetween(readFileSync(file, "utf8"));
+  if (!got) throw unmarked(file);
+  writeFileSync(to, `${got.content}\n`);
+  keep(file, got.html);
+  console.log(
+    `The body of ${shown(file)} as it is now is in ${to}. Change it there, then: node ${SCRIPT} put ${name} ${to}`,
+  );
+}
+
+/** A page with no marks has nowhere a body goes. */
+const unmarked = (file) =>
+  new Stop(
+    `${shown(file)} has no place for a body: only a page made by \`new\` has one, and one written over whole has lost it. Start a new one (node ${SCRIPT} new <another name>) and put the body into it.`,
+  );
+
+/**
+ * The page as it opens, at the width the app draws it, as pictures to look at before it is
+ * handed back: down the page, three windows at most. They are for checking, not for the
+ * reader, so they go in scratch/, never beside the page among the finished work.
+ */
+function shotPage(name) {
+  const file = pageAt(name);
+  const out = join(WORKSPACE, "scratch", `${basename(file, ".html")}-shots`);
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  const skills = process.env.THURSDAY_SKILLS || resolve(SKILL, "..");
+  const done = spawnSync(
+    process.execPath,
+    [
+      join(skills, "artifact", "runtime", "render.mjs"),
+      file,
+      "--out",
+      out,
+      "--size",
+      "1024x1400",
+      "--most",
+      "3",
+      "--name",
+      "page",
+      // Never in the job's own browser, which may be a window on their screen
+      "--apart",
+    ],
+    { stdio: "inherit" },
+  );
+  if (done.status !== 0)
+    throw new Stop("Fix what it names above, then run this again.");
+  console.log(`Look at them with look_at, from ${shown(out)}.`);
+}
+
+/**
+ * The page as a PDF beside it, printed by its own print rules in a headless browser of its
+ * own. Only a page made to be read carries the mark that it prints (shell head.html); a
+ * canvas or an app is seen, and prints as nothing worth keeping.
+ */
+function pdfFile(name) {
+  const file = pageAt(name);
+  const mark = PRINTS.exec(readFileSync(file, "utf8"));
+  if (!mark)
+    throw new Stop(
+      `${shown(file)} does not carry the mark of a page made to be read, so it is not printed. A canvas goes as its pictures (canvas.mjs shots). A document made before the mark gains it when its body is put again (node ${SCRIPT} get, then put); a deck, with deck.mjs pdf.`,
+    );
+  const out = join(dirname(file), `${basename(file, ".html")}.pdf`);
+  const skills = process.env.THURSDAY_SKILLS || resolve(SKILL, "..");
+  const done = spawnSync(
+    process.execPath,
+    [
+      join(skills, "artifact", "runtime", "render.mjs"),
+      file,
+      "--shot",
+      "--pdf",
+      out,
+      // A deck's slides are each checked to fill one sheet
+      ...(mark[1] ? ["--size", mark[1]] : []),
+      // Never in the job's own browser, which may be a window on their screen
+      "--apart",
+    ],
+    { encoding: "utf8" },
+  );
+  if (done.status !== 0)
+    throw new Stop(
+      `${done.stdout}${done.stderr}`.trim().split("\n").at(-1) ||
+        "The page could not be printed.",
+    );
+  const mb = (statSync(out).size / 1024 / 1024).toFixed(1);
+  console.log(
+    `Made ${shown(out)}, ${mb} MB. Hand back its path beside the page's.`,
+  );
+}
+
+/** The page as a Word file beside it, made by the page's own converter in a headless browser. */
+function wordFile(name) {
+  const file = pageAt(name);
+  const out = join(dirname(file), `${basename(file, ".html")}.docx`);
+  const skills = process.env.THURSDAY_SKILLS || resolve(SKILL, "..");
+  const done = spawnSync(
+    process.execPath,
+    [
+      join(skills, "artifact", "runtime", "document", "word.mjs"),
+      file,
+      "--out",
+      out,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+  );
+  if (done.status !== 0)
+    throw new Stop("Fix what it names above, then run this again.");
+  const { missed } = JSON.parse(done.stdout.trim().split("\n").at(-1));
+  console.log(
+    `Wrote ${shown(out)}: the document as a Word file. Hand back its path beside the page's.${missed.length ? ` Pictures that could not be put in, each written in as its words: ${missed.join("; ")}.` : ""}`,
+  );
+}
+
+const [command, ...rest] = process.argv.slice(2);
+try {
+  if (command === "new" || command === "quick") newPage(...rest);
+  else if (command === "put") putBody(...rest);
+  else if (command === "get") getBody(...rest);
+  else if (command === "shots") shotPage(rest[0]);
+  else if (command === "pdf") pdfFile(rest[0]);
+  else if (command === "docx") wordFile(rest[0]);
+  else
+    throw new Stop(
+      "Usage: document.mjs new <name> [--from <kind>] | put <name|path> <file.md|file.html> | get <name|path> <file> | shots <name|path> | pdf <name|path> | docx <name|path>",
+    );
+} catch (error) {
+  if (!(error instanceof Stop)) throw error;
+  console.error(error.message);
+  process.exitCode = 1;
+}

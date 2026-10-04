@@ -1,0 +1,372 @@
+"use client";
+
+import { useChat } from "@ai-sdk/react";
+import {
+  type DeepPartial,
+  DefaultChatTransport,
+  getToolName,
+  type InferUITools,
+  isToolUIPart,
+} from "ai";
+import {
+  ArrowUp,
+  BookOpen,
+  Check,
+  ChevronDown,
+  Loader2,
+  Minus,
+  Pencil,
+  Plus,
+  X,
+} from "lucide-react";
+import { type SubmitEvent, useEffect, useRef, useState } from "react";
+import { queryKey } from "@/app/api/query-key";
+import { Button } from "@/components/ui/button";
+import { ShinyText } from "@/components/ui/shiny-text";
+import { ModelPicker } from "@/features/ai/components/model-picker";
+import { ProviderIcon } from "@/features/ai/components/provider-icon";
+import type { TextModelProviderId } from "@/features/ai/model.schema";
+import type { createMemoryTools } from "@/features/ai/tools/memory.tool";
+import { TOOL_NAMES } from "@/features/ai/tools/tool-name";
+import type { MemoryNote } from "@/features/memory/memory.schema";
+import { cn } from "@/lib/utils";
+
+type KnownFact = { text: string; path: string };
+
+/** How long a finished edit's lines stay up before they clear. */
+const LINGER_MS = 4000;
+
+/** One transport for every edit: the model rides on each request, not on the hook. */
+const transport = new DefaultChatTransport({ api: queryKey.memoryEdit });
+
+/**
+ * Editing memory in a line, floating over the list above the rail while its rail
+ * button holds it open; closing it stops a run like leaving would. One send is
+ * one streamed run (memory.edit): the model writes with memory's own tools as it
+ * goes and each call is drawn as it arrives. Nothing about the exchange is kept —
+ * the next send starts clean — and the model is picked here, never saved.
+ */
+export function MemoryEdit({ notes }: { notes: MemoryNote[] }) {
+  const [draft, setDraft] = useState("");
+  const [model, setModel] = useState<{
+    provider: TextModelProviderId | null;
+    model: string;
+  }>({ provider: null, model: "" });
+  const [picking, setPicking] = useState(false);
+  const {
+    messages,
+    sendMessage,
+    setMessages,
+    status,
+    stop,
+    error,
+    clearError,
+  } = useChat({ transport });
+
+  // A run nobody is looking at has nobody to show its lines to
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+  useEffect(
+    () => () => {
+      void stopRef.current();
+    },
+    [],
+  );
+
+  // Facts seen on screen, kept after they go so a finished change still reads as what it replaced
+  const seen = useRef(new Map<number, KnownFact>());
+  for (const note of notes) {
+    for (const fact of note.facts) {
+      seen.current.set(fact.id, { text: fact.text, path: note.path });
+    }
+  }
+
+  const running = status === "submitted" || status === "streaming";
+  const ready = Boolean(model.provider && model.model.trim());
+  const reply = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  const parts = reply?.parts ?? [];
+  const calls = parts.filter(isToolUIPart);
+  const words = parts
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join(" ")
+    .trim();
+  const failed =
+    Boolean(error) || calls.some((call) => call.state === "output-error");
+  const written = calls.filter(
+    (call) =>
+      call.state === "output-available" &&
+      getToolName(call) !== TOOL_NAMES.memory_recall,
+  ).length;
+
+  useEffect(() => {
+    if (status !== "ready" || failed || messages.length === 0) return;
+    const clear = setTimeout(() => setMessages([]), LINGER_MS);
+    return () => clearTimeout(clear);
+  }, [status, failed, messages.length, setMessages]);
+
+  // A run that was refused — a key turned away, no credit, no network — gives the words
+  // back: nothing was done with them, and they were typed once
+  const sent = useRef("");
+  useEffect(() => {
+    if (!error || !sent.current) return;
+    const said = sent.current;
+    sent.current = "";
+    setDraft((now) => now || said);
+  }, [error]);
+
+  const submit = (event: SubmitEvent) => {
+    event.preventDefault();
+    const said = draft.trim();
+    if (!said || running) return;
+    // Nothing to run it on yet: the send is a way to the picker, never a press that does nothing
+    if (!ready) {
+      setPicking(true);
+      return;
+    }
+    sent.current = said;
+    setDraft("");
+    setPicking(false);
+    clearError();
+    // One send is one run: nothing from the last one rides along
+    setMessages([]);
+    void sendMessage({ text: said }, { body: { model } });
+  };
+
+  const line = running ? (
+    <ShinyText text="Working on memory" className="text-xs" />
+  ) : error ? (
+    <span className="text-xs text-destructive">{error.message}</span>
+  ) : reply ? (
+    <span className="text-xs text-muted-foreground">
+      {words ||
+        (written === 0
+          ? "Nothing to change"
+          : written === 1
+            ? "1 change saved"
+            : `${written} changes saved`)}
+    </span>
+  ) : draft.trim() && !ready && !picking ? (
+    // Send waited dead on a model nobody had picked, and nothing said so (UX test, memory)
+    <button
+      type="button"
+      onClick={() => setPicking(true)}
+      className="rounded-sm text-xs text-muted-foreground underline-offset-3 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      Pick a model to edit with
+    </button>
+  ) : null;
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-18 z-10 flex justify-center px-8">
+      <div className="pointer-events-auto flex w-full max-w-120 flex-col items-center gap-2">
+        {picking && (
+          <div className="w-full rounded-xl bg-popover p-2 shadow-lg ring-1 ring-foreground/10">
+            <ModelPicker
+              provider={model.provider}
+              model={model.model}
+              unset="Provider"
+              onChange={setModel}
+            />
+          </div>
+        )}
+
+        {calls.length > 0 && (
+          <ul className="w-full divide-y divide-border/60 overflow-hidden rounded-xl bg-popover shadow-lg ring-1 ring-foreground/10">
+            {calls.map((call) => (
+              <ChangeRow
+                key={call.toolCallId}
+                name={getToolName(call)}
+                input={call.input}
+                state={call.state}
+                errorText={
+                  call.state === "output-error" ? call.errorText : undefined
+                }
+                known={seen.current}
+              />
+            ))}
+          </ul>
+        )}
+
+        {line && <p className="max-w-full truncate px-1">{line}</p>}
+
+        <form
+          onSubmit={submit}
+          className="flex h-10 w-full items-center gap-1.5 rounded-xl bg-popover pr-1.5 pl-3.5 shadow-lg ring-1 ring-foreground/10"
+        >
+          <input
+            autoFocus
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={running}
+            aria-label="Edit memory"
+            placeholder="Tell memory what changed"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:opacity-60"
+          />
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => setPicking(!picking)}
+            className={cn("max-w-44", !ready && "text-muted-foreground")}
+          >
+            {ready && model.provider ? (
+              <>
+                <ProviderIcon provider={model.provider} className="size-3" />
+                <span className="truncate">{model.model}</span>
+              </>
+            ) : (
+              "Model"
+            )}
+            <ChevronDown className="text-muted-foreground" />
+          </Button>
+          <Button
+            type="submit"
+            size="icon-sm"
+            loading={running}
+            disabled={!draft.trim() || running}
+            aria-label="Send"
+          >
+            {!running && <ArrowUp />}
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+type Change = {
+  kind: "Remember" | "Replace" | "Forget" | "Rename" | "Opened";
+  path: string;
+  lines: { before?: string; after?: string }[];
+};
+
+/** Memory's tools as an edit runs them: a field renamed in memory.tool no longer compiles here. */
+type MemoryTools = InferUITools<ReturnType<typeof createMemoryTools>>;
+
+/** A call's arguments as far as they have arrived. */
+type Arriving<Name extends keyof MemoryTools> = DeepPartial<
+  MemoryTools[Name]["input"]
+>;
+
+/** What a call does, read off its arguments — still arriving while it streams — and the facts the screen has shown. */
+function describe(
+  name: string,
+  input: unknown,
+  known: Map<number, KnownFact>,
+): Change {
+  if (name === TOOL_NAMES.memory_recall) {
+    const args = (input ?? {}) as Arriving<"memory_recall">;
+    return { kind: "Opened", path: args.path ?? "", lines: [] };
+  }
+
+  if (name === TOOL_NAMES.memory_describe) {
+    const args = (input ?? {}) as Arriving<"memory_describe">;
+    return {
+      kind: "Rename",
+      path: args.path ?? "",
+      lines: args.description ? [{ after: `“${args.description}”` }] : [],
+    };
+  }
+
+  if (name === TOOL_NAMES.memory_forget) {
+    const args = (input ?? {}) as Arriving<"memory_forget">;
+    const ids = (args.factIds ?? []).filter((id) => id != null);
+    const facts = ids.map((id) => known.get(id));
+    return {
+      kind: "Forget",
+      path: facts.find((fact) => fact)?.path ?? "",
+      lines: ids.map((id, index) => ({
+        before: facts[index]?.text ?? `Fact #${id}`,
+      })),
+    };
+  }
+
+  // A new note's line leads its first facts; a fact replacing one the screen has shown reads as the change.
+  // Remember's facts are create's with `replaces` beside the text
+  const args = (input ?? {}) as Arriving<"memory_remember"> &
+    Pick<Arriving<"memory_create">, "description">;
+  const path = args.path ?? "";
+  const facts = (args.facts ?? []).filter((fact) => fact != null);
+  const lines: Change["lines"] = facts.map((fact) =>
+    fact.replaces != null
+      ? {
+          before: known.get(fact.replaces)?.text ?? `Fact #${fact.replaces}`,
+          after: fact.text,
+        }
+      : { after: fact.text },
+  );
+  if (name === TOOL_NAMES.memory_create && args.description) {
+    lines.unshift({ after: `“${args.description}”` });
+  }
+  return {
+    kind: facts.some((fact) => fact.replaces != null) ? "Replace" : "Remember",
+    path,
+    lines,
+  };
+}
+
+const GLYPHS = {
+  Remember: Plus,
+  Replace: Pencil,
+  Forget: Minus,
+  Rename: Pencil,
+  Opened: BookOpen,
+} as const;
+
+function ChangeRow({
+  name,
+  input,
+  state,
+  errorText,
+  known,
+}: {
+  name: string;
+  input: unknown;
+  state: string;
+  errorText?: string;
+  known: Map<number, KnownFact>;
+}) {
+  const change = describe(name, input, known);
+  const Glyph = GLYPHS[change.kind];
+  const broke = state === "output-error";
+  const done = state === "output-available";
+  return (
+    <li className="flex animate-in items-start gap-2.5 px-3 py-2.5 duration-200 fade-in slide-in-from-bottom-1">
+      <Glyph className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1 space-y-0.5">
+        {change.lines.map((line, at) => (
+          <div key={`${change.kind}-${at}`}>
+            {line.before && (
+              <p className="text-[13px] leading-5 text-muted-foreground/60 line-through">
+                {line.before}
+              </p>
+            )}
+            {line.after && (
+              <p className="text-sm leading-5 text-foreground/90">
+                {line.after}
+              </p>
+            )}
+          </div>
+        ))}
+        <p className="pt-0.5 font-mono text-[11px] text-muted-foreground">
+          {change.kind}
+          {change.path && ` · ${change.path}`}
+        </p>
+        {broke && errorText && (
+          <p className="text-xs text-destructive">{errorText}</p>
+        )}
+      </div>
+      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+        {broke ? (
+          <X className="size-3.5 text-destructive" />
+        ) : done ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Loader2 className="size-3.5 animate-spin" />
+        )}
+      </span>
+    </li>
+  );
+}

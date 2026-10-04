@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{title}}</title>
+    <style>
+      @font-face {
+        font-family: "Hand";
+        src: url(data:font/woff2;base64,__HAND__) format("woff2");
+        font-display: block;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1b1a24;
+        overflow: hidden;
+      }
+      #film {
+        display: block;
+      }
+      body.play {
+        display: grid;
+        grid-template-rows: 1fr auto;
+      }
+      body.play #film {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        object-fit: contain;
+        cursor: pointer;
+      }
+      #controls {
+        display: none;
+      }
+      body.play #controls {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 16px;
+        color: #f4efe4;
+        font: 500 13px/1 system-ui, sans-serif;
+      }
+      #play {
+        width: 34px;
+        height: 34px;
+        border: 0;
+        border-radius: 50%;
+        background: #f4efe4;
+        cursor: pointer;
+        position: relative;
+        flex: none;
+      }
+      #play::after {
+        content: "";
+        position: absolute;
+        left: 13px;
+        top: 10px;
+        border-left: 11px solid #1b1a24;
+        border-top: 7px solid transparent;
+        border-bottom: 7px solid transparent;
+      }
+      #play.on::after {
+        left: 11px;
+        top: 11px;
+        width: 4px;
+        height: 12px;
+        border: 0;
+        border-left: 4px solid #1b1a24;
+        border-right: 4px solid #1b1a24;
+        box-sizing: content-box;
+        width: 4px;
+      }
+      #scrub {
+        flex: 1;
+        height: 6px;
+        border-radius: 3px;
+        background: #ffffff2a;
+        cursor: pointer;
+        position: relative;
+      }
+      #scrub-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: 3px;
+        background: #f4efe4;
+      }
+      #time {
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="film"></canvas>
+    <div id="controls">
+      <button id="play" type="button" aria-label="Play"></button>
+      <div id="scrub"><div id="scrub-fill"></div></div>
+      <span id="time"></span>
+    </div>
+    <script>
+      // film runtime
+    </script>
+    <script id="film-code">
+      // film code
+    </script>
+  </body>
+</html>

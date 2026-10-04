@@ -1,0 +1,526 @@
+/* A canvas of options: boards pinned on one pan/zoom surface, a note beside each, under
+   the shell's head (shell.css). A rail of tools on the left, the list of boards beside
+   it, the surface, and the values of the board that is picked on the right. The theme
+   turns the frame around the boards, never a board: an option's colours are what is
+   being chosen. The canvas's own frame is named `cv-` or by id. */
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cv-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* The rail: pick or move, every board, the list. */
+.cv-rail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 44px;
+  padding: 10px 0;
+  border-right: 1px solid var(--sh-line);
+  background: var(--sh-soft);
+}
+.cv-rail .sh-rule {
+  width: 20px;
+  height: 1px;
+  margin: 0.25rem 0;
+}
+
+/* The list: every board small, its name and its size, the picked one marked. */
+.cv-layers {
+  width: 236px;
+  padding: 14px 10px;
+}
+body.cv-no-layers .cv-layers {
+  display: none;
+}
+.cv-layers button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.3125rem 0.375rem;
+  border: 0;
+  border-radius: calc(var(--sh-radius) * 0.7);
+  background: none;
+  color: var(--sh-ink);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.cv-layers button:hover {
+  background: var(--sh-sunk);
+}
+.cv-layers button:focus-visible {
+  outline: 2px solid var(--sh-brand);
+  outline-offset: -2px;
+}
+.cv-layers button.cv-on {
+  background: var(--sh-brand-soft);
+}
+.cv-layers button.cv-on .cv-name {
+  color: var(--sh-brand);
+  font-weight: 500;
+}
+.cv-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cv-dims {
+  flex: none;
+  color: var(--sh-ink-2);
+  font-size: 10.5px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 900px) {
+  .cv-layers {
+    display: none;
+  }
+}
+
+/* The surface. Panning moves it; zooming scales it about the pointer. Its dots are drawn
+   on the field rather than the stage, so they never scale into blobs: the step is set
+   from the zoom in canvas.js, which is what makes zooming feel like moving over a surface
+   instead of resizing a picture. */
+#field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  cursor: default;
+  touch-action: none;
+  background-color: var(--sh-paper);
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    var(--sh-dot) 1px,
+    transparent 0
+  );
+}
+body[data-tool="hand"] #field {
+  cursor: grab;
+}
+body[data-tool="note"] #field {
+  cursor: crosshair;
+}
+#field.cv-dragging {
+  cursor: grabbing;
+}
+#stage {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  user-select: none;
+}
+
+/* The zoom, in the corner where the hand that moves the surface already is. */
+.cv-zoom {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 2px;
+  border: 1px solid var(--sh-line);
+  border-radius: 999px;
+  background: var(--sh-paper);
+  box-shadow: var(--sh-shadow);
+}
+.cv-zoom output {
+  min-width: 42px;
+  text-align: center;
+  color: var(--sh-ink-2);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Over the board the pointer is on: open it alone, or its picture. */
+.cv-hover {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--sh-line);
+  border-radius: calc(var(--sh-radius) * 0.9);
+  background: var(--sh-paper);
+  box-shadow: var(--sh-shadow);
+}
+.cv-hover[hidden],
+.cv-hover [hidden] {
+  display: none;
+}
+
+/* The board that is picked: a ring and four corners drawn over the surface at the size
+   of the screen, not of the board — so they stay thin at any zoom, and nothing is ever
+   put inside a board, whose content is the design and whose size is checked. */
+.cv-pick {
+  position: absolute;
+  z-index: 2;
+  border: 2px solid var(--sh-brand);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.cv-pick[hidden] {
+  display: none;
+}
+.cv-pick i {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--sh-brand);
+  border-radius: 2px;
+  background: var(--sh-paper);
+}
+.cv-pick i:nth-child(1) {
+  top: -5px;
+  left: -5px;
+}
+.cv-pick i:nth-child(2) {
+  top: -5px;
+  right: -5px;
+}
+.cv-pick i:nth-child(3) {
+  bottom: -5px;
+  left: -5px;
+}
+.cv-pick i:nth-child(4) {
+  bottom: -5px;
+  right: -5px;
+}
+
+/* The picked board's values, read off the page. */
+.cv-spec {
+  width: 248px;
+  padding: 14px;
+}
+.cv-spec[hidden] {
+  display: none;
+}
+.cv-spec dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4375rem 0.75rem;
+  margin: 0 0 0.875rem;
+}
+.cv-spec dt {
+  color: var(--sh-ink-2);
+  font-size: 11.5px;
+}
+.cv-spec dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.375rem;
+  margin: 0;
+  color: var(--sh-ink);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.cv-spec dd i {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1px solid var(--sh-line);
+  border-radius: 3px;
+}
+.cv-spec .sh-b {
+  width: 100%;
+}
+/* Where there is not room for both — the app's dialog is under 1000px — the picked board's
+   values take the place of the list until every board is back (0 or Esc). A phone has
+   room for neither: the Export menu still copies the board. */
+@media (max-width: 1100px) {
+  body:has(#spec:not([hidden])) :is(.cv-layers, [data-layers]) {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .cv-spec {
+    display: none;
+  }
+}
+
+/* A board: a frame pinned at --x/--y, exactly --w by --h, with its name above it. */
+.frame {
+  position: absolute;
+  left: calc(var(--x) * 1px);
+  top: calc(var(--y) * 1px);
+  width: calc(var(--w) * 1px);
+}
+/* One line, always the same height, so boards in a row line up whatever they are called. */
+.frame > h2 {
+  margin: 0 0 0.5rem;
+  height: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--sh-ink);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.frame > h2 small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--sh-ink-3);
+  font-weight: 400;
+}
+.frame.picked > h2 {
+  color: var(--sh-brand);
+}
+/* The colours the board really paints, read off the page after it is drawn, so they
+   cannot disagree with the design. A dot copies its own. */
+.swatches {
+  display: flex;
+  flex: none;
+  gap: 3px;
+  margin-left: auto;
+}
+.swatches i {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--sh-line);
+  border-radius: 999px;
+  cursor: copy;
+}
+.frame > .board {
+  /* The board is what its own absolutely-placed content is placed against. Without
+     this the frame is, and the frame is not positioned while a shot is being taken:
+     the content would escape onto the page and land on another board's picture. */
+  position: relative;
+  width: calc(var(--w) * 1px);
+  height: calc(var(--h) * 1px);
+  overflow: hidden;
+  border: 1px solid var(--sh-line);
+  border-radius: 0.75rem;
+  box-shadow: var(--sh-shadow);
+  /* What a board is before it says otherwise — the design's own ground and type, which
+     no theme turns. Anything the board sets inline wins. */
+  background: #fff;
+  color: #18181b;
+  font: 14px / 1.6 var(--sh-font);
+}
+/* A board's content starts from nothing: no default margin on a heading, a paragraph or
+   a list, no space between table cells, no box around a fieldset. What is on a board is
+   laid out by its own flex, grid, gap and padding alone, so a picture of it is what was
+   written and a browser's defaults never add height to it. A list keeps its indent, so
+   a plain bulleted list still shows its bullets; a nav list sets padding:0 itself. */
+.board
+:is(
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p,
+  ul,
+  ol,
+  li,
+  dl,
+  figure,
+  blockquote,
+  table,
+  fieldset,
+  form,
+  pre,
+  hr
+) {
+  margin: 0;
+}
+.board fieldset {
+  padding: 0;
+  border: 0;
+}
+.board table {
+  border-spacing: 0;
+}
+/* Not svg: an icon drawn inline with a sentence stays on the line */
+.board :is(img, video) {
+  display: block;
+}
+/* A board whose content does not fit it. Red is failure, as everywhere in the app. */
+.frame.cut > .board {
+  border-color: var(--sh-bad);
+}
+.frame.cut > h2::before {
+  content: "cut";
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: var(--sh-bad);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+/* The one being carried forward, marked by the bot. The brand blue, as everything
+   picked is in the app. */
+.frame.leading > .board {
+  border-color: var(--sh-brand);
+  box-shadow:
+    0 0 0 1px var(--sh-brand),
+    var(--sh-shadow);
+}
+.frame.leading > h2[data-mark]::after {
+  content: attr(data-mark);
+  padding: 0 0.375rem;
+  border: 1px solid var(--sh-brand);
+  border-radius: 999px;
+  color: var(--sh-brand);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+/* A note: what this option is for, and what it costs. Plain text, no frame. */
+.note {
+  position: absolute;
+  left: calc(var(--x) * 1px);
+  top: calc(var(--y) * 1px);
+  width: calc(var(--w, 320) * 1px);
+  margin: 0;
+  white-space: pre-wrap;
+  user-select: text;
+  color: var(--sh-ink-2);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+.note strong {
+  display: block;
+  color: var(--sh-ink);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+/* A title over a row of boards — a flow, a round, a page of the exploration — never
+   over one, whose name strip already names it. */
+.note.title {
+  color: var(--sh-ink);
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+/* A sticky: a remark pinned to the surface — a question, a thing to decide, what the
+   user said — with a ground of its own so it reads as put there, not as a caption. */
+.note.sticky {
+  width: calc(var(--w, 240) * 1px);
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--sh-line);
+  border-radius: 0.5rem;
+  background: var(--sh-soft);
+  color: var(--sh-ink);
+  box-shadow: var(--sh-shadow);
+}
+/* A note the reader pinned: the paper of a sticky note, so it reads as theirs whatever
+   the theme. It moves by dragging, opens for its words with a double click, and a picked
+   one is ringed — the ring in screen pixels at any zoom (`--cv-z`, canvas.js). */
+.note.sticky[data-by="user"] {
+  padding: calc(0.75rem * var(--s, 1)) calc(0.875rem * var(--s, 1));
+  border-color: #e8d587;
+  border-radius: calc(0.5rem * var(--s, 1));
+  background: #fff3bf;
+  color: #3b3110;
+  font-size: calc(0.8125rem * var(--s, 1));
+}
+body[data-tool="select"] .note.sticky {
+  cursor: grab;
+}
+.note.sticky.cv-note-on,
+.note.sticky[contenteditable] {
+  outline: calc(2px / var(--cv-z, 1)) solid var(--sh-brand);
+  outline-offset: calc(2px / var(--cv-z, 1));
+}
+.note.sticky[contenteditable] {
+  cursor: text;
+}
+.note.sticky:empty::before {
+  content: "A note";
+  color: #8a7a3d;
+}
+
+/* A canvas drawn as a file's face: its boards side by side on plain paper, and nothing else. */
+.sh-face .cv-rail,
+.sh-face .cv-zoom,
+.sh-face .note,
+.sh-face .frame > h2 {
+  display: none;
+}
+.sh-face #field {
+  background-image: none;
+}
+
+/* Flat: the boards alone, one under another at true size — what the renderer shoots,
+   and what a printer prints, a board a page (canvas.js turns it on before printing). */
+body.shot {
+  display: block;
+  height: auto;
+  overflow: visible;
+  background: #fff;
+}
+body.shot .sh-head,
+body.shot .cv-rail,
+body.shot .cv-layers,
+body.shot .cv-zoom,
+body.shot .cv-hover,
+body.shot .cv-pick,
+body.shot .cv-spec,
+body.shot .note,
+body.shot .frame > h2 {
+  display: none;
+}
+body.shot .cv-main {
+  display: block;
+}
+body.shot #stage,
+body.shot #field {
+  position: static;
+  overflow: visible;
+  transform: none;
+  /* The surface's dots belong to the canvas, never to a board's picture */
+  background: none;
+}
+body.shot .frame {
+  position: static;
+  width: auto;
+}
+/* A board grows here instead of clipping, so a picture of one that does not fit comes
+   out the wrong size and the renderer refuses it by name. On the canvas it clips. It
+   grows over a height and an overflow the board sets itself as well, or a board sized
+   inline would clip in its picture too and pass. */
+body.shot .frame > .board {
+  height: auto !important;
+  min-height: calc(var(--h) * 1px);
+  overflow: visible !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* On paper each board keeps its name above it, and has a page to itself; the printer
+   fits a wide one to the page. */
+@media print {
+  body.shot .frame > h2 {
+    display: flex;
+    color: #18181b;
+  }
+  body.shot .frame {
+    break-after: page;
+    break-inside: avoid;
+  }
+}

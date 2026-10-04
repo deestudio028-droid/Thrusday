@@ -1,0 +1,54 @@
+---
+checked: 2026-09-30
+paths:
+  - "bin/**"
+  - ".github/**"
+  - "scripts/{dev,reset,pack}.mts"
+  - "{config,next.config,drizzle.config}.ts"
+  - "instrumentation*.ts"
+  - "{package,release-please-config,knip,biome}.json"
+---
+
+# Run, check and ship
+
+One line, `npx thursday-agent`, boots the app on a stranger's machine, and checking a change never
+touches anyone's data.
+
+## Start here
+- `config.ts` — the roots, paths, limits and tuning numbers.
+- `bin/thursday.cjs` — where `npx thursday-agent` and `pnpm start` begin: `node-check.cjs`, in syntax any Node parses, then `thursday.mjs`.
+- `bin/thursday.mjs` — the command: two roots, a port, the built server.
+- `bin/background.mjs` — `start`, `stop`, `status` and the first run's question: the launchd job, and the copy it runs from `~/.thursday/app`.
+- `features/settings/update.ts` — asking npm for the newest version when a browser opens the app, and moving the background copy to it.
+- `scripts/dev.mts` — `pnpm dev`: `next dev` on a free loopback port.
+- `instrumentation-node.ts` — boot: migrate, seal what is still in the clear, sweep the last run, start routines and the phone.
+- `next.config.ts` — standalone output, and the run-time files the trace is told about.
+- `scripts/pack.mts` — builds `dist/`, the tree npm publishes, behind its gates.
+- `.github/workflows/release.yml` — release-please's PR through to `npm publish` with provenance.
+
+## How it fits
+`config.ts` reads the roots from the environment once, at import, and is loaded by the server,
+client screens, plain `node` (`pnpm dev`, `pnpm reset`) and the Next and drizzle configs. Boot runs
+once per server process: `next dev` reloads code but not boot, so a new boot step waits for a
+restart — say so to whoever runs the server.
+
+## What breaks
+- Plain `node` loads `config.ts` for `pnpm dev` and `pnpm reset`, and no CI step loads it that
+  way: an `@/` import there, or TypeScript that is not erasable (an `enum`), fails before anything
+  starts.
+- `pnpm dev` runs on the checkout, where every file is beside it: a file the server reads by path
+  at run time that is neither in `outputFileTracingIncludes` nor copied by `pack.mts` is missing
+  only from a build, and `REQUIRED` fails the pack when one an install cannot work without is gone.
+- The checkout's `node_modules` hides what a tarball lacks: a change to `pack.mts`,
+  `next.config.ts`, `bin/` or a dependency can break only the published package.
+
+## Check
+Such a change is tried as `npm pack ./dist`, installed in an empty folder, booted on an empty
+`--home` with a markdown page opened, and resolved per platform with `npm install --os/--cpu/--libc`.
+`node scripts/pack.mts` runs the release gates and writes `dist/` without publishing;
+`pnpm pack:check` repacks the last build, checking its files but not lint, types or the build;
+`pnpm release` publishes and is never a check. `pnpm test:cli` checks what an older Node is told,
+and CI's `old-node` job runs the command on Nodes the app does not take. A starter or boot change
+is served from the build, which a running `next dev` does not block; `--home` keeps it off the
+checkout's own database:
+`pnpm build && THURSDAY_SKIP_BROWSER=1 pnpm start --home "$(mktemp -d)" --port <n> --no-open`

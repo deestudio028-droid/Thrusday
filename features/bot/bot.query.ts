@@ -1,0 +1,341 @@
+import { createHash } from "node:crypto";
+import { count, eq, inArray, sql } from "drizzle-orm";
+import { appEvents } from "@/app/api/events/app-event.server";
+import { BOT_ROSTER } from "@/config";
+import { database } from "@/database/db";
+import {
+  botMcpToolTable,
+  botTable,
+  mcpToolTable,
+  threadTable,
+} from "@/database/tables";
+import type { Effort, TextModelProviderId } from "@/features/ai/model.schema";
+import { readConfig, writeConfig } from "@/features/config/config.query";
+import { botFolderName } from "@/features/workspace/workspace";
+import { publicError } from "@/lib/public-error";
+import {
+  BOT_MEMORY_KEY,
+  type BotForm,
+  type BotIcon,
+  DEFAULT_BOT,
+  isBotMemoryOn,
+  type JobBot,
+  type OwnLine,
+  type PinnedTool,
+  pickedModel,
+} from "./bot.schema";
+import { findBotSeed } from "./bot.seed";
+import { SEED_WORDS } from "./bot.seed.retired";
+
+// Bots are keyed by name throughout: it is the primary key and what `delegate` receives.
+
+const asJobBot = (row: {
+  name: string;
+  description: string;
+  ownLine: OwnLine | null;
+  systemPrompt: string | null;
+  icon: BotIcon | null;
+  /** Empty runs on the app default model (bot.run resolveModel). */
+  provider: TextModelProviderId | null;
+  model: string | null;
+  disabled: boolean;
+  compactAt: number | null;
+  effort: Effort | null;
+}): JobBot => ({
+  name: row.name,
+  description: row.description,
+  ownLine: row.ownLine?.line ?? null,
+  systemPrompt: row.systemPrompt,
+  icon: row.icon,
+  provider: row.provider,
+  model: row.model,
+  disabled: row.disabled,
+  compactAt: row.compactAt,
+  effort: row.effort,
+});
+
+/**
+ * Who a job can go to: the user's bots, or DEFAULT_BOT when there are none.
+ * Switched-off bots are left out here and nowhere else — this one read is what
+ * every prompt's roster and `delegate`'s list are built from, so off is off in
+ * all of them without a second rule to keep.
+ */
+export async function listJobBots(): Promise<JobBot[]> {
+  const rows = await database
+    .select()
+    .from(botTable)
+    .orderBy(botTable.createdAt);
+
+  // The fallback answers "no bots exist", never "every bot is off": switching
+  // them all off is a choice, and conjuring a worker would undo it.
+  return rows.length
+    ? rows.filter((row) => !row.disabled).map(asJobBot)
+    : [DEFAULT_BOT];
+}
+
+/**
+ * The bot a job names, switched off or not: a job already under way resumes
+ * through here, and refusing it would strand a thread the user can still answer.
+ * `delegate` is what checks `disabled`, because that is where a bot is picked.
+ *
+ * Exact name first, then case-insensitive only; no looser matching. A miss
+ * returns null so `delegate` can list the roster instead.
+ */
+export async function findJobBot(name: string): Promise<JobBot | null> {
+  const row = await findBot(name);
+  if (row) return asJobBot(row);
+
+  // Case is not a different name: the spoken name arrives through a transcript
+  const said = name.trim().toLowerCase();
+  const [match] = await database
+    .select()
+    .from(botTable)
+    .where(eq(sql`lower(${botTable.name})`, said));
+  if (match) return asJobBot(match);
+
+  // The worker that exists when no row does, as listJobBots has it: once there are bots,
+  // a Jarvis the user deleted is gone like any other and takes no more work
+  if (DEFAULT_BOT.name.toLowerCase() !== said) return null;
+  const [any] = await database
+    .select({ name: botTable.name })
+    .from(botTable)
+    .limit(1);
+  return any ? null : DEFAULT_BOT;
+}
+
+/** Bots with their pinned tools and token totals: a set of queries plus grouping, not a join. */
+export async function findAllBots() {
+  const [bots, pins, spent] = await Promise.all([
+    database.select().from(botTable).orderBy(botTable.createdAt),
+    database
+      .select({
+        botName: botMcpToolTable.botName,
+        id: mcpToolTable.id,
+        name: mcpToolTable.name,
+        serverName: mcpToolTable.serverName,
+      })
+      .from(botMcpToolTable)
+      .innerJoin(mcpToolTable, eq(botMcpToolTable.toolId, mcpToolTable.id)),
+    // Grouped by name; threads point at bots by name (tables.ts thread.bot)
+    database
+      .select({
+        bot: threadTable.bot,
+        input: sql<number>`coalesce(sum(${threadTable.inputTokens}), 0)`,
+        output: sql<number>`coalesce(sum(${threadTable.outputTokens}), 0)`,
+        // Raw max over a timestamp column arrives as integer seconds
+        lastJobAt: sql<number | null>`max(${threadTable.updatedAt})`,
+      })
+      .from(threadTable)
+      .groupBy(threadTable.bot),
+  ]);
+
+  const byBot = new Map<string, PinnedTool[]>();
+  for (const { botName, ...tool } of pins) {
+    const list = byBot.get(botName) ?? [];
+    list.push(tool);
+    byBot.set(botName, list);
+  }
+  const tokensOf = new Map(
+    spent.map((row) => [
+      row.bot,
+      { input: Number(row.input), output: Number(row.output) },
+    ]),
+  );
+  const lastJobOf = new Map(
+    spent.flatMap((row) =>
+      row.lastJobAt == null
+        ? []
+        : [[row.bot, new Date(Number(row.lastJobAt) * 1000)] as const],
+    ),
+  );
+  return bots.map((bot) => ({
+    ...bot,
+    tools: byBot.get(bot.name) ?? [],
+    tokens: tokensOf.get(bot.name) ?? { input: 0, output: 0 },
+    lastJobAt: lastJobOf.get(bot.name) ?? null,
+  }));
+}
+
+/** Whether bots keep their own memory at all (bot.schema BOT_MEMORY_KEY). */
+export async function readBotMemoryOn(): Promise<boolean> {
+  return isBotMemoryOn(await readConfig(BOT_MEMORY_KEY));
+}
+
+export async function writeBotMemoryOn(on: boolean): Promise<void> {
+  await writeConfig(BOT_MEMORY_KEY, on ? "on" : "off");
+}
+
+async function findBot(name: string) {
+  const [bot] = await database
+    .select()
+    .from(botTable)
+    .where(eq(botTable.name, name));
+  return bot ?? null;
+}
+
+/**
+ * The line a bot may write after its description, and the one it wrote before: null when it
+ * may not (no row, or the user locked it).
+ */
+export async function ownLineOf(
+  name: string,
+): Promise<{ line: string | null } | null> {
+  const row = await findBot(name);
+  if (!row || row.descriptionLocked) return null;
+  return { line: row.ownLine?.line ?? null };
+}
+
+/**
+ * A bot's own line (`describe_self`), unless the user locked it since. Returns the line it
+ * replaced, or undefined when nothing was written. Emitted here, since the screen that lists
+ * the bots did not make this change.
+ */
+export async function writeOwnLine(
+  name: string,
+  line: string,
+  reason: string,
+): Promise<{ was: string | null } | undefined> {
+  const row = await findBot(name);
+  if (!row || row.descriptionLocked) return undefined;
+  const was = row.ownLine?.line ?? null;
+  if (was === line) return { was };
+  await database
+    .update(botTable)
+    .set({ ownLine: { line, reason, at: Date.now() } })
+    .where(eq(botTable.name, row.name));
+  appEvents.emit({ type: "bots" });
+  return { was };
+}
+
+/** The user takes the bot's own line away; its description stays. */
+export async function clearOwnLine(name: string): Promise<boolean> {
+  const cleared = await database
+    .update(botTable)
+    .set({ ownLine: null })
+    .where(eq(botTable.name, name))
+    .returning({ name: botTable.name });
+  return cleared.length > 0;
+}
+
+/** Rows on the roster, switched off or not: what BOT_ROSTER.max counts. */
+export async function countBots(): Promise<number> {
+  const [{ total }] = await database.select({ total: count() }).from(botTable);
+  return total;
+}
+
+/**
+ * Every name that has folders in the workspace: the rows, switched off or not,
+ * and DEFAULT_BOT, which works without one.
+ */
+export async function listBotNames(): Promise<string[]> {
+  const rows = await database.select({ name: botTable.name }).from(botTable);
+  return [...new Set([...rows.map((row) => row.name), DEFAULT_BOT.name])];
+}
+
+/**
+ * Returns null when the name is taken: two bots with one name would be a coin
+ * toss at delegate time, and two whose names give one folder would share their
+ * memory and artifacts (workspace.ts botFolderName). Refused past BOT_ROSTER.max.
+ */
+export async function createBot(form: BotForm) {
+  const folder = botFolderName(form.name).toLowerCase();
+  const rows = await database.select({ name: botTable.name }).from(botTable);
+  if (rows.some((row) => botFolderName(row.name).toLowerCase() === folder))
+    return null;
+  if (rows.length >= BOT_ROSTER.max)
+    publicError(
+      `There are already ${BOT_ROSTER.max} bots. Delete one to make another.`,
+    );
+
+  const { toolIds, ...values } = pickedModel(form);
+  const [bot] = await database.insert(botTable).values(values).returning();
+  if (toolIds?.length) await setPinnedTools(bot.name, toolIds);
+  return bot;
+}
+
+export async function updateBot(name: string, patch: Partial<BotForm>) {
+  // The two model fields travel together; normalise only when at least one arrived
+  // (pickedModel reads a missing field as null and would clear the other)
+  const { toolIds, ...values } =
+    "provider" in patch || "model" in patch ? pickedModel(patch) : patch;
+  // Renaming would orphan pinned tools and every thread sent to the old name, so name is never patched
+  delete (values as { name?: string }).name;
+
+  const [bot] = Object.keys(values).length
+    ? await database
+        .update(botTable)
+        .set(values)
+        .where(eq(botTable.name, name))
+        .returning()
+    : await database.select().from(botTable).where(eq(botTable.name, name));
+  if (!bot) return null;
+
+  if (toolIds) await setPinnedTools(name, toolIds);
+  return bot;
+}
+
+/** The pinned set is replaced whole; partial edits drift. */
+async function setPinnedTools(botName: string, toolIds: number[]) {
+  await database
+    .delete(botMcpToolTable)
+    .where(eq(botMcpToolTable.botName, botName));
+  if (toolIds.length === 0) return;
+
+  // Only ids that still exist: one stale picker entry must not fail the whole save
+  const alive = await database
+    .select({ id: mcpToolTable.id })
+    .from(mcpToolTable)
+    .where(inArray(mcpToolTable.id, toolIds));
+  if (alive.length === 0) return;
+
+  await database
+    .insert(botMcpToolTable)
+    .values(alive.map(({ id }) => ({ botName, toolId: id })));
+}
+
+export async function deleteBot(name: string) {
+  const removed = await database
+    .delete(botTable)
+    .where(eq(botTable.name, name))
+    .returning({ name: botTable.name });
+  return removed.length > 0;
+}
+
+const shaOf = (text: string) =>
+  createHash("sha256").update(text.trim()).digest("hex");
+
+/**
+ * A ready-made bot's words the user never changed move to what its seed says now (D7). Its
+ * role and roster line are copied into its row when it is installed, so a seed rewritten in a
+ * release reached nobody who already had it. A row moves only when its words are, exactly,
+ * ones an earlier version of the seed wrote (bot.seed.retired); anything else is the user's
+ * and stays. Run at boot; returns how many bots moved.
+ */
+export async function refreshSeedWords(): Promise<number> {
+  const rows = await database.select().from(botTable);
+  const before = SEED_WORDS.before as {
+    roles: Record<string, readonly string[]>;
+    descriptions: Record<string, readonly string[]>;
+  };
+  let moved = 0;
+  for (const row of rows) {
+    const seed = findBotSeed(row.name);
+    if (!seed) continue;
+    const role =
+      row.systemPrompt !== null &&
+      before.roles[row.name]?.includes(shaOf(row.systemPrompt));
+    const description = before.descriptions[row.name]?.includes(
+      shaOf(row.description),
+    );
+    if (!role && !description) continue;
+    await database
+      .update(botTable)
+      .set({
+        ...(role ? { systemPrompt: seed.systemPrompt } : {}),
+        ...(description ? { description: seed.description } : {}),
+      })
+      .where(eq(botTable.name, row.name));
+    moved++;
+  }
+  return moved;
+}

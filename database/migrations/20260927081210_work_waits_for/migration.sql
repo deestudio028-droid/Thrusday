@@ -1,0 +1,1 @@
+ALTER TABLE `thread_work` ADD `waits_for` text DEFAULT '[]' NOT NULL;

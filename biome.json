@@ -1,0 +1,92 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "!node_modules",
+      "!.next",
+      "!dist",
+      "!build",
+      "!database/migrations",
+      "!public/here/world.json",
+      "!.design",
+      "!skills/artifact/scripts/archify",
+      "!skills/artifact/runtime/app",
+      "!skills/artifact/runtime/document/quick.html",
+      "!skills/artifact/runtime/vendor"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+
+      "complexity": { "noUselessTypeConstraint": "error" },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "noUnusedFunctionParameters": "error",
+        "useExhaustiveDependencies": "off"
+      },
+      "style": {
+        "noNamespace": "error",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "zod": {
+                "importNames": ["z", "default"],
+                "message": "Write `import * as z from \"zod\"`: Turbopack ships every zod locale to the browser for `import z` and `import { z }`."
+              }
+            }
+          }
+        },
+        "useAsConstAssertion": "error",
+        "useArrayLiterals": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noExtraNonNullAssertion": "error",
+        "noArrayIndexKey": "off",
+        "noMisleadingInstantiator": "error",
+        "noUnsafeDeclarationMerging": "error",
+        "useNamespaceKeyword": "error"
+      }
+    },
+    "domains": {
+      "next": "recommended",
+      "react": "recommended"
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["skills/artifact/runtime/motion/*.js"],
+      "linter": {
+        "rules": { "correctness": { "noUnusedVariables": "off" } }
+      }
+    }
+  ],
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+# Contributing
+
+## Run it
+
+```bash
+git clone https://github.com/cgoinglove/thursday-agent.git
+cd thursday
+pnpm install
+pnpm dev       # first run also fetches the browser bots drive, in the background
+```
+
+There is no `.env` to fill in. Keys are entered in the app, on the first screen, and
+sealed with a key the first start appends to the checkout's `.env`
+(`THURSDAY_ENCRYPTION_KEY`): keep it with `local.db`, or the saved keys are entered again.
+Node 22.18+ and pnpm 10+.
+
+Useful:
+
+| | |
+|---|---|
+| `pnpm dev` | the app, with hot reload — on 4747, or the next free port; afterwards on the port its first run took |
+| `pnpm typecheck` / `pnpm lint` | types and lint |
+| `pnpm test:live` / `test:bot` / `test:memory` / `test:reach` / `test:artifact` / `test:skills` / `test:secrets` | the call, bots, memory tools, the phone and calls in writing, file viewer URLs, shipped skills' files, sealed secrets — offline, providers mocked |
+| `pnpm reset` | wipe local data (calls, jobs, memory) and optionally the build |
+| `pnpm build` && `pnpm start` | the production server, as `npx thursday-agent` runs it — on this checkout's data, not `~/.thursday` |
+| `pnpm pack:check` | assemble the tree npm would publish into `dist/`, from the last build and with no gates |
+
+## Before you open a pull request
+
+- **Read [AGENTS.md](AGENTS.md) first**, then the map in `.claude/rules/` for
+  the area you change: what the area is for, the files to open first, and the
+  few rules that hold there. A change that lands in the wrong folder is the most
+  common reason a review goes long. A coding agent reads the same files.
+- `pnpm typecheck`, `pnpm lint` and the test suites pass — CI runs them, then
+  `pnpm build`.
+- **Changed a screen? Run the app and look at it.** Screenshots in the PR help.
+- **Changed a prompt or a tool description?** Read the assembled prompt, not the
+  diff — the file is a fragment, the prompt is what the model gets.
+- **Changed the schema?** `pnpm db:generate`, and commit the migration. Never
+  `drizzle-kit push`.
+- One change per pull request. A refactor bundled with a fix is two reviews
+  wearing one hat.
+
+## What is worth working on
+
+Open an issue before a large change — the architecture is opinionated, and it is
+cheaper to disagree about a paragraph than about a diff. Small fixes, new skills,
+a provider driver, or a bug with a reproduction need no permission at all.
+
+## Commits
+
+Pull requests are squashed on merge, so **the pull request title becomes the commit
+message** — and that message decides the next release. Write it as
+[conventional commits](https://www.conventionalcommits.org):
+
+| Title | Effect |
+|---|---|
+| `feat: ring the user when a job needs them` | next minor, under Features |
+| `fix: keep the caption from clipping at 780px` | next patch, under Fixes |
+| `docs:` · `refactor:` · `perf:` | no release; `perf` and `refactor` still show up |
+| `chore:` · `test:` | no release, not in the changelog |
+| `feat!:`, or `BREAKING CHANGE:` in the body | next major |
+
+A title that fits none of these releases nothing — fine for a typo, wrong for a
+feature. Commits inside the branch can say anything.
