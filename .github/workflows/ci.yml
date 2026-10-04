@@ -52,6 +52,7 @@ jobs:
       - run: pnpm test:memory
       - run: pnpm test:reach
       - run: pnpm test:artifact
+      - run: pnpm test:hosting
       - run: pnpm test:skills
       - run: pnpm test:cli
       - run: pnpm test:secrets

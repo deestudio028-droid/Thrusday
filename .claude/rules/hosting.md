@@ -37,7 +37,7 @@ Railway and are represented as `preserve()` in the checked-in plan.
 
 ## Check
 
-`node --test scripts/hosting-access.test.mjs` exercises anonymous denial, sign-in/out,
+`pnpm test:hosting` exercises anonymous denial, sign-in/out, device-code parsing,
 origin checks, secure cookies, rate limits, forwarding headers, live response/request
 streaming and protected WebSocket upgrades without providers or real user data. Deployment
 verification also checks the external HTTPS endpoint and persistent volume settings.
