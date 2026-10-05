@@ -68,7 +68,7 @@ export async function createReminder(input: ReminderInput, now = new Date()) {
       .values(channels.map((channel) => ({ reminderId: id, channel })));
   });
   changed();
-  return { id, label: input.label, dueAt, timeZone: input.timeZone };
+  return { id, label: input.label, dueAt, timeZone: input.timeZone, channels };
 }
 
 export async function listReminders() {

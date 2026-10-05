@@ -23,7 +23,7 @@ const parameters = z.object({
     .string()
     .nullish()
     .describe(
-      "With create: exactly what the user asked to be told. The same text goes by email, Telegram, and voice call.",
+      "With create: exactly what the user asked to be told, using the delivery channels chosen in Settings.",
     ),
   at: z
     .string()
@@ -43,7 +43,7 @@ export function createReminderTools() {
   return {
     [TOOL_NAMES.reminder]: tool({
       description:
-        "One-time, time-specific reminders. List, create or cancel. At the due minute the server attempts independent email, Telegram and owner-only mobile call deliveries. Each channel requires setup; unavailable channels are recorded, and uncertain sends are never repeated automatically. Do not say the user received a message or answered a call merely because a provider accepted it.",
+        "One-time, time-specific reminders requested by the user. List, create or cancel. At the due minute the server attempts the delivery channels chosen in Settings, including an owner-only mobile call. Each channel requires setup; unavailable channels are recorded, and uncertain sends are never repeated automatically. Do not say the user received a message or answered a call merely because a provider accepted it.",
       inputSchema: parameters,
       execute: async (args) => {
         if (args.action === "list") return { reminders: await listReminders() };
