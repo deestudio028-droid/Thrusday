@@ -1,38 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { queryKey } from "@/app/api/query-key";
 import { Button } from "@/components/ui/button";
+import { PC_BROWSER_STATUS } from "@/config";
 import { useServerAction } from "@/lib/protocol/use-server-action";
+import { revalidate, useServerRoute } from "@/lib/protocol/use-server-route";
 import {
   pairPcBrowserAction,
-  pcBrowserStatusAction,
   unpairPcBrowserAction,
 } from "../pc-browser.action";
 
 export function PcBrowserSetting() {
   const [key, setKey] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [status] = useServerAction(pcBrowserStatusAction, {
-    onOk: (value) => setConnected(value.connected),
-    errorMessage: false,
+  const status = useServerRoute<{
+    connected: boolean;
+    sharing: boolean;
+    lastSeen: number | null;
+  }>(queryKey.pcBrowserStatus, {
+    refreshInterval: PC_BROWSER_STATUS.refreshMs,
   });
+  const connected = status.data?.connected ?? false;
   const [pair, pairing] = useServerAction(pairPcBrowserAction, {
     onOk: (value) => {
       setKey(value);
-      setConnected(false);
+      void revalidate(queryKey.pcBrowserStatus);
     },
   });
   const [unpair, unpairing] = useServerAction(unpairPcBrowserAction, {
     onOk: () => {
       setKey(null);
-      setConnected(false);
+      void revalidate(queryKey.pcBrowserStatus);
     },
   });
-  useEffect(() => {
-    void status();
-    const timer = window.setInterval(() => void status(), 5000);
-    return () => window.clearInterval(timer);
-  }, [status]);
   return (
     <section className="space-y-3 border-t border-border pt-6">
       <h3 className="font-semibold">Your PC Chrome</h3>
@@ -41,6 +41,15 @@ export function PcBrowserSetting() {
         extension on that PC, pair it once, then open its icon and Share this
         tab. The extension has Pause and Stop controls. Chrome must stay open.
       </p>
+      {!connected && (
+        <p className="text-xs text-muted-foreground">
+          {status.error
+            ? "Could not read connection status. Refresh Thursday."
+            : status.data?.lastSeen
+              ? `Last Chrome check-in: ${new Date(status.data.lastSeen).toLocaleTimeString()}. Check the extension's server address and connection message.`
+              : "Waiting for the extension to reach this server. Use this site's HTTPS address and its pairing key."}
+        </p>
+      )}
       <p className="text-sm">
         Status:{" "}
         {connected ? "connected to a selected tab" : "offline or paused"}

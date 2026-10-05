@@ -15,6 +15,7 @@ hosted assistant. A shared tab can remain in the background while the owner uses
 ## Start here
 - `features/pc-browser/bridge.ts` — hashed device key, pinned command relay and status.
 - `app/api/pc-browser/bridge/route.ts` — bearer validation for polls and command results.
+- `app/api/pc-browser/status/route.ts` — authenticated heartbeat status for Settings.
 - `features/pc-browser/components/pc-browser-setting.tsx` — pairing and connection status.
 - `public/pc-browser-extension/worker.js` — selected-tab execution, polling, Pause and Stop.
 - `public/pc-browser-extension/popup.js` — server-specific pairing and optional website access.
@@ -22,7 +23,8 @@ hosted assistant. A shared tab can remain in the background while the owner uses
 
 ## How it fits
 Pairing stores only the random key's hash on the server. The extension long-polls its configured
-HTTPS server and declares ready only with a shared, unpaused web tab. Commands stay within that
+HTTPS server, verifies its key before claiming pairing, and declares ready only with a shared,
+unpaused web tab. Commands stay within that
 tab; cross-site navigation needs Chrome's optional website permission. Timeout is an uncertain
 action, so a click or fill is never automatically repeated. Replacing or revoking a key cancels
 pending server commands. Chrome must remain open; no browser cookies or profiles are exported.

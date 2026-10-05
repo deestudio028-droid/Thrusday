@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { PC_BROWSER_STATUS } from "@/config";
 import { database } from "@/database/db";
 import { pcBrowserDeviceTable } from "@/database/tables";
 import { publicError } from "@/lib/public-error";
@@ -91,7 +92,12 @@ export async function authenticatePcBrowser(header: string | null) {
 }
 
 export function pcBrowserStatus() {
-  return { connected: state.ready && Date.now() - state.lastSeen < 45_000 };
+  return {
+    connected:
+      state.ready && Date.now() - state.lastSeen < PC_BROWSER_STATUS.staleMs,
+    sharing: state.ready,
+    lastSeen: state.lastSeen || null,
+  };
 }
 
 /** Extension polls from the owner's computer. No page URL or browser secret is sent in headers. */

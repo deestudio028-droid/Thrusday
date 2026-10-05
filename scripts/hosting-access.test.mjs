@@ -113,6 +113,7 @@ test("every private route is denied without a session; public health checks the 
   for (const path of [
     "/",
     "/api/config",
+    "/api/pc-browser/status",
     "/api/events",
     "/api/file/private",
     "/_next/static/chunk.js",

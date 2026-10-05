@@ -68,6 +68,11 @@ Stop remain available. Pair with the same server that you use in Thursday Settin
 pairing key belongs to the local instance; after deployment use the hosted HTTPS address and
 create its pairing key there. Keep Chrome open for this connection.
 
+The popup verifies the key with Thursday before saving it and shows the actual server address
+and any connection error. Selecting a tab alone does not confirm a server connection. Settings
+shows the last Chrome check-in when the connection is offline. A shared tab can stay in the
+background while you return to Thursday.
+
 The gateway exposes only three static information pages without a sign-in: `/about`, `/privacy`
 and `/terms`, for the connected Google application's consent information. They contain no
 instance data. Assistant pages, files, assets and APIs still require the hosting session,

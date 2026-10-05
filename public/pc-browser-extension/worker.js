@@ -23,6 +23,31 @@ async function requirePair() {
     );
 }
 
+async function verifyPair(pairedKey, serverOrigin) {
+  const response = await fetch(
+    `${serverOrigin}/api/pc-browser/bridge?verify=1`,
+    {
+      headers: {
+        authorization: `Bearer ${pairedKey}`,
+        "ngrok-skip-browser-warning": "1",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (response.status === 401)
+    throw Error(
+      "Thursday rejected this key. Copy the current key from this same server and pair again.",
+    );
+  if (!response.ok)
+    throw Error(`Thursday pairing check failed (${response.status}).`);
+  const result = await response.json();
+  if (result.paired !== true)
+    throw Error(
+      "This server did not confirm pairing. Update Thursday and use its HTTPS address.",
+    );
+}
+
 async function selectedTab() {
   const { tabId, paused } = await session.get(["tabId", "paused"]);
   if (paused || !tabId)
@@ -186,8 +211,15 @@ async function loop() {
             "ngrok-skip-browser-warning": "1",
           },
           cache: "no-store",
+          signal: AbortSignal.timeout(30_000),
         });
       } catch {
+        const kept = await local.get(["pairedKey", "serverOrigin"]);
+        if (kept.pairedKey !== pairedKey || kept.serverOrigin !== serverOrigin)
+          continue;
+        await session.set({
+          connectionProblem: `Could not reach ${serverOrigin}. Check the address and Chrome website permission.`,
+        });
         await new Promise((resolve) => setTimeout(resolve, 3000));
         continue;
       }
@@ -206,6 +238,9 @@ async function loop() {
         return;
       }
       if (!response.ok) {
+        await session.set({
+          connectionProblem: `Thursday connection failed (${response.status}).`,
+        });
         await new Promise((resolve) => setTimeout(resolve, 3000));
         continue;
       }
@@ -213,9 +248,14 @@ async function loop() {
       try {
         ({ command } = await response.json());
       } catch {
+        await session.set({
+          connectionProblem:
+            "The server returned a page instead of browser JSON. Check the Thursday address.",
+        });
         await new Promise((resolve) => setTimeout(resolve, 3000));
         continue;
       }
+      await session.set({ lastPollAt: Date.now(), connectionProblem: null });
       if (!command || !ready) continue;
       let result;
       try {
@@ -261,12 +301,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }))
       )
         throw Error("Allow access to your Thursday server before pairing.");
+      try {
+        await verifyPair(message.key, origin.origin);
+      } catch (error) {
+        await local.set({ pairingError: String(error?.message ?? error) });
+        throw error;
+      }
       await local.set({ pairedKey: message.key, serverOrigin: origin.origin });
       await local.remove(["pendingPair", "pairingError"]);
-      await session.set({ paused: true });
+      await session.set({
+        paused: true,
+        lastPollAt: null,
+        connectionProblem: null,
+      });
       void loop();
       return {
-        message: "Paired. Open the tab you want, then press Share this tab.",
+        message:
+          "Paired and verified by Thursday. Open a web tab, then press Share this tab.",
       };
     }
     if (message.kind === "share") {
@@ -279,7 +330,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         throw Error("Open a normal web tab first.");
       await session.set({ tabId: tab.id, paused: false });
       void loop();
-      return { message: `Sharing this tab: ${tab.title ?? tab.url}` };
+      return {
+        message: `Tab selected: ${tab.title ?? tab.url}. Connecting to Thursday…`,
+      };
     }
     if (message.kind === "pause") {
       await session.set({ paused: true });
@@ -294,16 +347,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       };
     }
     const current = await status();
-    const { pairingError } = await local.get("pairingError");
+    const { pairingError, serverOrigin } = await local.get([
+      "pairingError",
+      "serverOrigin",
+    ]);
+    const { connectionProblem, lastPollAt } = await session.get([
+      "connectionProblem",
+      "lastPollAt",
+    ]);
     if (current.paired) void loop();
     return {
-      message: current.paired
-        ? current.paused
-          ? "Paired, paused."
-          : current.tabId
-            ? "Paired, sharing one tab."
-            : "Paired, no tab selected."
-        : (pairingError ?? "Not paired."),
+      message:
+        pairingError ??
+        (current.paired
+          ? connectionProblem
+            ? connectionProblem
+            : current.paused
+              ? `Paired to ${serverOrigin}, paused.`
+              : lastPollAt && Date.now() - lastPollAt < 45_000
+                ? `Connected to ${serverOrigin}. Sharing the selected tab.`
+                : `Tab selected; waiting for ${serverOrigin} to confirm its connection.`
+          : "Not paired."),
     };
   })()
     .then(sendResponse)
@@ -330,9 +394,20 @@ chrome.permissions.onAdded.addListener(async () => {
   }
   if (!(await chrome.permissions.contains({ origins: [`${origin.origin}/*`] })))
     return;
+  try {
+    await verifyPair(pendingPair.key, origin.origin);
+  } catch (error) {
+    await local.set({ pairingError: String(error?.message ?? error) });
+    await local.remove("pendingPair");
+    return;
+  }
   await local.set({ pairedKey: pendingPair.key, serverOrigin: origin.origin });
   await local.remove(["pendingPair", "pairingError"]);
-  await session.set({ paused: true });
+  await session.set({
+    paused: true,
+    lastPollAt: null,
+    connectionProblem: null,
+  });
   void loop();
 });
 chrome.runtime.onStartup.addListener(() => {

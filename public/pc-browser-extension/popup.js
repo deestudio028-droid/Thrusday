@@ -63,6 +63,8 @@ chrome.permissions.contains({ origins: webOrigins }).then((allowed) => {
   sites.checked = allowed;
 });
 send({ kind: "status" });
+// Refresh while this popup is open so local tab selection is not mistaken for server acceptance.
+setInterval(() => send({ kind: "status" }), 1000);
 chrome.storage.local.get("serverOrigin").then((saved) => {
   server.value = saved.serverOrigin ?? "";
 });

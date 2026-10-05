@@ -7,7 +7,12 @@ const worker = await readFile(
   new URL("../public/pc-browser-extension/worker.js", import.meta.url),
   "utf8",
 );
-function harness({ allowed = true, response = null, tab = null } = {}) {
+function harness({
+  allowed = true,
+  response = null,
+  tab = null,
+  verification = 200,
+} = {}) {
   const values = {};
   const sessions = {};
   const requests = [];
@@ -31,6 +36,7 @@ function harness({ allowed = true, response = null, tab = null } = {}) {
   });
   runInNewContext(worker, {
     URL,
+    AbortSignal,
     setTimeout,
     chrome: {
       tabs: { get: async () => tab },
@@ -55,6 +61,12 @@ function harness({ allowed = true, response = null, tab = null } = {}) {
       },
     },
     fetch: async (url, options) => {
+      if (new URL(url).searchParams.get("verify") === "1")
+        return {
+          ok: verification === 200,
+          status: verification,
+          json: async () => ({ paired: true }),
+        };
       requests.push({ url, options });
       if (typeof response === "function") return response(url, options);
       return response ?? new Promise(() => {});
@@ -70,6 +82,28 @@ function harness({ allowed = true, response = null, tab = null } = {}) {
   };
 }
 const key = "a".repeat(43);
+
+test("pairing is not saved when the server rejects the key", async () => {
+  const app = harness({ verification: 401 });
+  const result = await app.send({
+    kind: "pair",
+    key,
+    serverOrigin: "https://assistant.example",
+  });
+  assert.match(result.error, /rejected this key/);
+  assert.equal(app.values.pairedKey, undefined);
+  assert.equal(app.requests.length, 0);
+});
+
+test("the popup reports a connection failure instead of claiming a shared tab is connected", async () => {
+  const app = harness();
+  app.values.pairedKey = key;
+  app.values.serverOrigin = "https://assistant.example";
+  app.sessions.tabId = 42;
+  app.sessions.connectionProblem = "Could not reach the server";
+  const result = await app.send({ kind: "status" });
+  assert.match(result.message, /Could not reach/);
+});
 test("sharing without a paired server reports the missing connection", async () => {
   const app = harness();
   const result = await app.send({ kind: "share" });

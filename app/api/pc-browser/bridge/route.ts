@@ -17,6 +17,8 @@ const deny = () =>
 export async function GET(request: Request) {
   if (!(await authenticatePcBrowser(request.headers.get("authorization"))))
     return deny();
+  if (new URL(request.url).searchParams.get("verify") === "1")
+    return new Response(JSON.stringify({ paired: true }), { headers });
   const ready = request.headers.get("x-thursday-ready") === "1";
   const command = await pollPcBrowser(ready);
   return new Response(JSON.stringify({ command }), { headers });

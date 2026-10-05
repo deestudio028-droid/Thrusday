@@ -22,6 +22,8 @@ export const decodePagePath = (segments: string[]) =>
 export const queryKey = {
   /** Mailbox monitor state without message content or credentials. */
   mailMonitor: "/api/mail-monitor",
+  /** Explicitly shared Chrome relay heartbeat; requires the hosting session. */
+  pcBrowserStatus: "/api/pc-browser/status",
   /** MemoryNote[] first page: pinned first, then by warmth */
   memory: "/api/memory",
   /** Next page; `offset` is the count received so far */

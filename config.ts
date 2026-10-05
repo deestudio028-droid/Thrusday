@@ -237,9 +237,9 @@ export const REACH = {
   gmailTokenMarginMs: 60_000,
 };
 
-/** Bounded time-specific notifications: a late restart must not dial old reminders. */
-/** Phone turns include module loading and model work. Longer waits allow cold starts,
- * while the provider's 120-second call limit still bounds the whole conversation. */
+/** Shorter polling refreshes the Chrome status sooner; staleMs bounds a lost device heartbeat. */
+export const PC_BROWSER_STATUS = { refreshMs: 5_000, staleMs: 45_000 };
+
 /** Poll frequency sets alert latency; batch and size limits bound inbox work. */
 export const MAIL_MONITOR = {
   tickMs: 60_000,
@@ -251,6 +251,8 @@ export const MAIL_MONITOR = {
   alertChars: 600,
 };
 
+/** Phone turns include module loading and model work. Longer waits allow cold starts,
+ * while the provider's 120-second call limit still bounds the whole conversation. */
 export const PHONE_TURN = {
   answerMs: 30_000,
   waitSeconds: 1,
@@ -263,6 +265,7 @@ export const PHONE_TURN = {
   speechPauseSeconds: 2,
 };
 
+/** Bounded time-specific notifications: a late restart must not dial old reminders. */
 export const REMINDER = {
   tickMs: 5_000,
   catchUpMs: 30 * 60_000,
