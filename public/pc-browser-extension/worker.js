@@ -28,8 +28,8 @@ async function selectedTab() {
   if (paused || !tabId)
     throw Error("Paused or no tab shared. Open the extension and share a tab.");
   const tab = await chrome.tabs.get(tabId);
-  if (!tab.active || !tab.url || !/^https?:\/\//.test(tab.url))
-    throw Error("Bring the shared web tab to the front, or share another tab.");
+  if (!tab.url || !/^https?:\/\//.test(tab.url))
+    throw Error("Keep the shared web tab open, or share another tab.");
   return tab;
 }
 

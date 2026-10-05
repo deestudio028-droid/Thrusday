@@ -63,7 +63,7 @@ page before leaving a shared browser.
 
 For navigation across websites in the shared tab, reload the installed extension and enable
 **Allow automation across websites in the shared tab** in its popup. Chrome asks for website
-permission. Commands still target only the one active tab you explicitly shared; Pause and
+permission. Commands target only the tab you explicitly shared, including in the background; Pause and
 Stop remain available. Pair with the same server that you use in Thursday Settings. A local
 pairing key belongs to the local instance; after deployment use the hosted HTTPS address and
 create its pairing key there. Keep Chrome open for this connection.

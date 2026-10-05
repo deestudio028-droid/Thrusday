@@ -7,7 +7,7 @@ const worker = await readFile(
   new URL("../public/pc-browser-extension/worker.js", import.meta.url),
   "utf8",
 );
-function harness({ allowed = true, response = null } = {}) {
+function harness({ allowed = true, response = null, tab = null } = {}) {
   const values = {};
   const sessions = {};
   const requests = [];
@@ -33,6 +33,7 @@ function harness({ allowed = true, response = null } = {}) {
     URL,
     setTimeout,
     chrome: {
+      tabs: { get: async () => tab },
       storage: { local: storage(values), session: storage(sessions) },
       permissions: {
         contains: async ({ origins }) =>
@@ -84,6 +85,19 @@ test("opening a paired popup resumes polling after a worker restart", async () =
   await app.send({ kind: "status" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(app.requests.length, 1);
+});
+
+test("a shared background tab stays ready when the owner opens Thursday", async () => {
+  const app = harness({
+    tab: { id: 42, active: false, url: "https://example.test/" },
+  });
+  app.values.pairedKey = key;
+  app.values.serverOrigin = "https://assistant.example";
+  app.sessions.tabId = 42;
+  app.sessions.paused = false;
+  await app.send({ kind: "status" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(app.requests[0].options.headers["x-thursday-ready"], "1");
 });
 test("permission grant completes pairing even after the popup closes", async () => {
   const app = harness();
