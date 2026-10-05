@@ -16,10 +16,13 @@ import {
 } from "@/features/ai/tools/bot.tool";
 import { callTools } from "@/features/ai/tools/call.tool";
 import { createDeckTools } from "@/features/ai/tools/deck.tool";
+import { createGoogleTools } from "@/features/ai/tools/google.tool";
 import { createLookTool } from "@/features/ai/tools/look.tool";
 import { createMailTools } from "@/features/ai/tools/mail.tool";
 import { createMcpTools } from "@/features/ai/tools/mcp.tool";
 import { createMemoryTools } from "@/features/ai/tools/memory.tool";
+import { createPcBrowserTools } from "@/features/ai/tools/pc-browser.tool";
+import { createReminderTools } from "@/features/ai/tools/reminder.tool";
 import { createRoutineTools } from "@/features/ai/tools/routine.tool";
 import {
   createCallSearchTool,
@@ -461,6 +464,9 @@ async function buildTools(run: ToolRun): Promise<ToolSet> {
       ),
       // What starts by itself is the user's to set up, so only the call holds it
       ...createRoutineTools(),
+      ...createReminderTools(),
+      ...createGoogleTools(),
+      ...createPcBrowserTools(),
       // Absent for a model a picture would not reach, as for a bot
       ...(sees ? createLookTool() : {}),
       // The page's own tools, for a spoken call only: nothing hands a written turn back to it
@@ -522,5 +528,7 @@ async function buildTools(run: ToolRun): Promise<ToolSet> {
     // Absent until the user gives her a mailbox (Settings › Phone › Email): last, so the
     // set before it stays as it was cached
     ...(await createMailTools()),
+    ...createGoogleTools(),
+    ...createPcBrowserTools(),
   };
 }

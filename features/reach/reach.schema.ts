@@ -28,6 +28,10 @@ export const EMAIL_ADDRESS_KEY = "EMAIL_ADDRESS";
 export const EMAIL_PASSWORD_KEY = "EMAIL_APP_PASSWORD";
 export const EMAIL_IMAP_KEY = "EMAIL_IMAP_SERVER";
 export const EMAIL_SMTP_KEY = "EMAIL_SMTP_SERVER";
+/** Gmail's HTTPS sending route on hosts that block outbound SMTP. */
+export const GMAIL_CLIENT_ID_KEY = "GMAIL_OAUTH_CLIENT_ID";
+export const GMAIL_CLIENT_SECRET_KEY = "GMAIL_OAUTH_CLIENT_SECRET";
+export const GMAIL_REFRESH_TOKEN_KEY = "GMAIL_OAUTH_REFRESH_TOKEN";
 
 /** What each service needs set before it is listened to, in the order its maker takes them. */
 export const REACH_KEYS: Record<ReachChannelName, readonly string[]> = {
@@ -117,4 +121,7 @@ export type ReachChannelStatus = {
 /** A mailbox of Thursday's own, as the screen shows it: `imap` and `smtp` are `host:port`. */
 export type ReachMailbox = { address: string; imap: string; smtp: string };
 
-export type ReachStatus = { channels: ReachChannelStatus[] };
+export type ReachStatus = {
+  channels: ReachChannelStatus[];
+  gmailAuthorized: boolean;
+};

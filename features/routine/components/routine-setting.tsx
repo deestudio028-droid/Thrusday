@@ -39,6 +39,7 @@ import { ROUTINE } from "@/config";
 import type { Bot } from "@/features/bot/bot.schema";
 import { BotMark, markOf } from "@/features/bot/components/bot-mark";
 import { roomOpens } from "@/features/bot/thread.store";
+import { ReminderList } from "@/features/reminder/components/reminder-list";
 import {
   SettingError,
   SettingItems,
@@ -133,6 +134,7 @@ export function RoutineSetting() {
             ))
           )}
         </SettingItems>
+        <ReminderList />
       </SettingScreen>
 
       <RoutineSheet

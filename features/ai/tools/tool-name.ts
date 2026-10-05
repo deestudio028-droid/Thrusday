@@ -28,6 +28,11 @@ export const TOOL_NAMES = {
   thread_show: "thread_show",
   thread_seen: "thread_seen",
   routine: "routine",
+  reminder: "reminder",
+  google_calendar: "google_calendar",
+  gmail_inbox: "gmail_inbox",
+  google_drive: "google_drive",
+  pc_browser: "pc_browser",
   send_message: "send_message",
   thread_recall: "thread_recall",
 

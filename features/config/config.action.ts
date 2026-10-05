@@ -9,7 +9,17 @@ import {
   startChatGptSignIn,
 } from "@/features/ai/chatgpt";
 import { LIVE_PROVIDER } from "@/features/ai/live.schema";
-import { REACH_KEYS } from "@/features/reach/reach.schema";
+import {
+  GMAIL_CLIENT_ID_KEY,
+  GMAIL_CLIENT_SECRET_KEY,
+  REACH_KEYS,
+} from "@/features/reach/reach.schema";
+import {
+  CALL_OWNER_NUMBER_KEY,
+  TWILIO_ACCOUNT_SID_KEY,
+  TWILIO_CALLER_NUMBER_KEY,
+  TWILIO_VOICE_PIN_KEY,
+} from "@/features/reminder/reminder.schema";
 import { keyRefusal } from "@/lib/live/live.server";
 import { serverAction } from "@/lib/protocol/server-action";
 import { publicError } from "@/lib/public-error";
@@ -40,6 +50,23 @@ export const setConfigAction = serverAction(
       if (!acceptsChoice(entry, parsed.value)) {
         publicError("That is not one of the options.");
       }
+    } else if (
+      [CALL_OWNER_NUMBER_KEY, TWILIO_CALLER_NUMBER_KEY].includes(parsed.key) &&
+      !/^\+[1-9]\d{7,14}$/.test(parsed.value)
+    ) {
+      publicError(
+        "Enter your own mobile number with country code, for example +919876543210.",
+      );
+    } else if (
+      parsed.key === TWILIO_ACCOUNT_SID_KEY &&
+      !/^AC[a-f0-9]{32}$/i.test(parsed.value)
+    ) {
+      publicError("Enter the Twilio Account SID from your Console.");
+    } else if (
+      parsed.key === TWILIO_VOICE_PIN_KEY &&
+      !/^\d{6,10}$/.test(parsed.value)
+    ) {
+      publicError("Choose a private PIN of six to ten digits.");
     } else if (parsed.value.length < KEY_MIN) {
       publicError("That does not look like a key");
     }
@@ -51,6 +78,12 @@ export const setConfigAction = serverAction(
         publicError(`${LIVE_PROVIDER.label} did not take it — ${refused}`);
     }
     await writeConfig(parsed.key, parsed.value);
+    if ([GMAIL_CLIENT_ID_KEY, GMAIL_CLIENT_SECRET_KEY].includes(parsed.key)) {
+      const { clearGmailAuthorization } = await import(
+        "@/features/reach/gmail"
+      );
+      await clearGmailAuthorization();
+    }
     await tokenChanged(parsed.key);
   },
 );
@@ -59,6 +92,10 @@ export const removeConfigAction = serverAction(async (key: unknown) => {
   const parsed = KeySchema.parse(key);
   refuseFromEnv(parsed);
   await removeConfig(parsed);
+  if ([GMAIL_CLIENT_ID_KEY, GMAIL_CLIENT_SECRET_KEY].includes(parsed)) {
+    const { clearGmailAuthorization } = await import("@/features/reach/gmail");
+    await clearGmailAuthorization();
+  }
   await tokenChanged(parsed);
 });
 

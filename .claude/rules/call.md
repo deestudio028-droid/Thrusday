@@ -31,7 +31,8 @@ takes a glance on the spot and hands anything longer to a bot.
 - `features/ai/prompts/thursday.prompt.ts` — what the backend hears, on every way in.
 - `features/thursday/open-work.ts` — background work as a call is told about it.
 - `features/reach/reach.ts` — Thursday from a phone chat.
-- `features/reach/email.ts` — a mailbox of hers as a phone channel: IMAP in, SMTP out, whose mail is vouched for.
+- `features/reach/email.ts` — a mailbox of hers as a phone channel: IMAP in, SMTP or hosted Gmail HTTPS out, whose mail is vouched for.
+- `features/reach/gmail.ts` — OAuth consent and sealed refresh token for hosted Gmail HTTPS sending.
 
 ## How it fits
 A spoken call is two models on one Live connection: `openCallAction` builds the voice's prompt, the
@@ -58,6 +59,7 @@ how this machine reaches her. Background work reaches a call through `open-work`
 - `take` checks `unproven` before anything else: a channel's `Incoming` that carries it and still reaches `hear` lets a mail forged in the named address's name run work through her; a `named` channel answers nobody but the named person.
 
 ## Check
+`pnpm test:reminder` (the durable reminder clock and channel outcomes),
 `pnpm test:live` (the Live wire, what is put down, both call prompts, call history) and
 `pnpm test:reach` (a phone, a call in writing, the settings row). To hear a call, place one on a
 scratch server (AGENTS.md, Running the app); it needs a microphone and bills the key or the plan.

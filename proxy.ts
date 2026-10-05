@@ -87,7 +87,19 @@ export function proxy(request: NextRequest) {
   const reading =
     READS.has(request.method) &&
     !ACTING_READS.some((route) => path.startsWith(route));
+  const pcBridge =
+    path === "/api/pc-browser/bridge" &&
+    /^Bearer [A-Za-z0-9_-]{43}$/.test(
+      request.headers.get("authorization") ?? "",
+    ) &&
+    (request.method === "GET" || request.method === "POST");
+  const twilioVoice =
+    path.startsWith("/api/twilio/voice/") &&
+    request.method === "POST" &&
+    /^[A-Za-z0-9+/=]+$/.test(request.headers.get("x-twilio-signature") ?? "");
   if (
+    !pcBridge &&
+    !twilioVoice &&
     !reading &&
     (elsewhere ||
       (hosted && !local && !READS.has(request.method) && origin === null))

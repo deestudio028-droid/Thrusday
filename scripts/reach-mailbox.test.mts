@@ -27,6 +27,7 @@ type Stored = {
 const inbox: Stored[] = [];
 const downloads: number[] = [];
 let connects = 0;
+let smtpVerifications = 0;
 let current: FakeImap | null = null;
 class FakeImap extends EventEmitter {
   usable = true;
@@ -73,7 +74,14 @@ for (const at of [
   pathToFileURL(require.resolve("nodemailer")).href,
 ])
   mock.module(at, {
-    namedExports: { createTransport: () => ({ verify: async () => true }) },
+    namedExports: {
+      createTransport: () => ({
+        verify: async () => {
+          smtpVerifications++;
+          return true;
+        },
+      }),
+    },
   });
 
 const { REACH } = await import("../config.ts");
@@ -115,7 +123,7 @@ const resolve = async (name: string) => {
   return found;
 };
 
-const mailbox = "thursday@example.com";
+let mailbox = "thursday@example.com";
 let nextUid = 1;
 /** A signed mail from the one who may write arrives, and the server says so. */
 async function arrive(subject: string, from = "alex@example.org") {
@@ -260,4 +268,19 @@ test("a mail from someone who may not write is passed over without being fetched
   assert.equal(await seenUid(), 6, "the inbox moves past both");
   heard.stop.abort();
   await heard.done;
+});
+
+test("hosted Gmail keeps receiving before HTTPS sending is authorized", async () => {
+  process.env.THURSDAY_HOSTED = "1";
+  mailbox = "thursday@gmail.com";
+  const before = smtpVerifications;
+  const heard = listen();
+  await until(() => connects === 4, "Gmail IMAP connected");
+  await arrive("Gmail inbox still works");
+  await until(() => heard.got.length === 1, "incoming Gmail delivered");
+  assert.equal(heard.got[0].words, "Subject: Gmail inbox still works\n\nhello");
+  assert.equal(smtpVerifications, before, "blocked SMTP is never contacted");
+  heard.stop.abort();
+  await heard.done;
+  delete process.env.THURSDAY_HOSTED;
 });

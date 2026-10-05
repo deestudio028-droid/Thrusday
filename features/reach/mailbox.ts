@@ -7,6 +7,7 @@ import {
 } from "@/features/config/config.query";
 import { publicError } from "@/lib/public-error";
 import { EMAIL_SEEN_KEY } from "./email";
+import { clearGmailAuthorization } from "./gmail";
 import {
   domainOf,
   findMailServers,
@@ -59,6 +60,9 @@ export async function saveMailbox(input: {
     publicError(
       "That is the address you write to her from. Her mailbox needs an address of its own.",
     );
+  const prior = await readConfig(EMAIL_ADDRESS_KEY);
+  if (prior && prior.toLowerCase() !== address.toLowerCase())
+    await clearGmailAuthorization();
   await writeConfig(EMAIL_ADDRESS_KEY, address);
   await writeConfig(EMAIL_PASSWORD_KEY, input.password.trim());
   await writeConfig(EMAIL_IMAP_KEY, serverWords(servers.imap));
@@ -76,6 +80,7 @@ export async function removeMailbox(): Promise<void> {
   for (const key of REACH_KEYS.email)
     if (configFromEnv(key)) publicError(envWords("Email's mailbox"));
   for (const key of REACH_KEYS.email) await removeConfig(key);
+  await clearGmailAuthorization();
   await removeConfig(EMAIL_SEEN_KEY);
   // No keys left: the channel stops, and whoever was named goes with it
   await startReach("email");

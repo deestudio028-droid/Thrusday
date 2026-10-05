@@ -229,6 +229,50 @@ export const REACH = {
   mailDnsMs: 5_000,
   mailIdsKept: 200,
   mailLookMs: 5 * 60_000,
+  // Gmail's one-time consent window and HTTPS request deadline; shortening either
+  // makes a slow account approval or network fail, lengthening keeps it pending longer.
+  gmailAuthMs: 10 * 60_000,
+  gmailHttpMs: 20_000,
+  // Refresh an access token before its expiry instead of losing a send in flight.
+  gmailTokenMarginMs: 60_000,
+};
+
+/** Bounded time-specific notifications: a late restart must not dial old reminders. */
+/** Phone turns include module loading and model work. Longer waits allow cold starts,
+ * while the provider's 120-second call limit still bounds the whole conversation. */
+/** Poll frequency sets alert latency; batch and size limits bound inbox work. */
+export const MAIL_MONITOR = {
+  tickMs: 60_000,
+  batch: 20,
+  sourceBytes: 2 * 1024 * 1024,
+  textChars: 12_000,
+  ioMs: 25_000,
+  assessMs: 30_000,
+  alertChars: 600,
+};
+
+export const PHONE_TURN = {
+  answerMs: 30_000,
+  waitSeconds: 1,
+  /** Return a ready answer promptly, keeping webhook work below the trial's five-second limit. */
+  callbackWaitMs: 3_000,
+  /** More time lets the owner finish a longer keypad PIN before it is submitted. */
+  pinSeconds: 20,
+  /** Give speech time to start and preserve short pauses within a sentence. */
+  speechStartSeconds: 10,
+  speechPauseSeconds: 2,
+};
+
+export const REMINDER = {
+  tickMs: 5_000,
+  catchUpMs: 30 * 60_000,
+  dispatchMs: 25_000,
+  max: 500,
+  maxWords: 2_000,
+  // Keep spoken reminders short; longer calls can incur charges or reach voicemail.
+  callWords: 350,
+  // Count a rolling window so calls near a calendar-month boundary stay inside budget.
+  callBudgetWindowMs: 31 * 86_400_000,
 };
 
 /**

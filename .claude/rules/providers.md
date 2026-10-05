@@ -4,6 +4,7 @@ paths:
   - "features/ai/{model,model.schema,chatgpt,openrouter}.ts"
   - "features/ai/components/**"
   - "features/config/**"
+  - "features/google/**"
   - "features/connectors/**"
   - "features/ai/tools/{mcp.tool,studio.tool,search.tool,connected}.ts"
   - "app/api/{llm-model,mcp,config}/**"
@@ -21,6 +22,7 @@ MCP servers.
 - `features/ai/chatgpt.ts` — GPT Subscription: sign-in, renewal, plan usage, the Codex request shape, its pictures, a call on it.
 - `lib/chatgpt-device.ts` — remote device-code sign-in requests and polling for a hosted instance.
 - `features/ai/openrouter.ts` — OpenRouter's list read into the gateway's words, and its key's credit.
+- `features/google/**` — Calendar and Drive tools over Google OAuth.
 - `features/config/config.const.ts` — every key and app-wide model pick, grouped as Settings draws them.
 - `features/connectors/mcp.manager.ts` — MCP sessions, their OAuth, reconnects.
 - `features/ai/tools/connected.ts` — what answers `tool_search` and `tool_call`: MCP and the studio.

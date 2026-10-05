@@ -137,6 +137,19 @@ test("every private route is denied without a session; public health checks the 
   assert.equal((await f.request("/healthz")).status, 503);
 });
 
+test("only static information pages are public; methods and private lookalikes stay protected", async (t) => {
+  const f = await fixture(t);
+  for (const path of ["/about", "/privacy", "/terms"])
+    assert.equal((await f.request(path)).status, 200);
+  assert.equal((await f.request("/privacy/private")).status, 401);
+  assert.equal((await f.request("/privacy", { method: "POST" })).status, 403);
+  assert.equal(
+    (await f.request("/privacy", { headers: { host: "attacker.example" } }))
+      .status,
+    421,
+  );
+});
+
 test("login requires an exact origin, sets a secure session, and logout revokes it", async (t) => {
   const f = await fixture(t);
   for (const path of ["/", "/__auth/login"]) {
@@ -322,6 +335,18 @@ test("same-origin EventSource GET needs no Origin; acting GET rejects cross-site
     ).status,
     200,
   );
+  assert.equal(
+    (
+      await f.request("/api/reach/gmail/callback?state=test-only", {
+        headers: {
+          cookie,
+          "sec-fetch-site": "cross-site",
+          "sec-fetch-mode": "navigate",
+        },
+      })
+    ).status,
+    200,
+  );
 });
 
 test("an in-memory session does not survive replacing the gateway process", async (t) => {
@@ -336,6 +361,63 @@ test("an in-memory session does not survive replacing the gateway process", asyn
     (
       await second.request("/api/config?token=untrusted&password=untrusted", {
         headers: {},
+      })
+    ).status,
+    401,
+  );
+});
+
+test("only narrow paired-browser and signed-voice paths reach their own app validator", async (t) => {
+  const reached = [];
+  const f = await fixture(t, (req, res) => {
+    reached.push(req.url);
+    res.end("validator reached");
+  });
+  const bearer = `Bearer ${"a".repeat(43)}`;
+  assert.equal(
+    (
+      await f.request("/api/pc-browser/bridge", {
+        headers: { authorization: bearer },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.request("/api/twilio/voice/start", {
+        method: "POST",
+        headers: { "x-twilio-signature": "dGVzdA==" },
+      })
+    ).status,
+    200,
+  );
+  assert.deepEqual(reached, [
+    "/api/pc-browser/bridge",
+    "/api/twilio/voice/start",
+  ]);
+  for (const path of [
+    "/api/config",
+    "/api/pc-browser/bridgex",
+    "/api/twilio/voice-wrong/start",
+  ]) {
+    assert.equal(
+      (
+        await f.request(path, {
+          method: "POST",
+          headers: { authorization: bearer, "x-twilio-signature": "dGVzdA==" },
+        })
+      ).status,
+      403,
+    );
+  }
+  assert.equal(
+    (await f.request("/api/twilio/voice/start", { method: "POST" })).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.request("/api/pc-browser/bridge", {
+        headers: { authorization: "Bearer wrong" },
       })
     ).status,
     401,

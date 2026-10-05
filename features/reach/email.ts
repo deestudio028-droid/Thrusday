@@ -15,6 +15,7 @@ import {
   type OutgoingFile,
 } from "./channel";
 import { type ChatText, chatPieces } from "./chat-text";
+import { sendGmail } from "./gmail";
 import {
   IMAP_TLS_PORT,
   type MailServer,
@@ -373,6 +374,9 @@ export function createEmail(
       auth: { user: address, pass: password },
     });
 
+  const gmailHttps =
+    process.env.THURSDAY_HOSTED === "1" && mailbox.endsWith("@gmail.com");
+
   /** A sign-in the server turned away is the user's to fix; asking again would not change it. */
   const refusedBy = (where: MailServer) => (cause: unknown) => {
     const failed = cause as {
@@ -436,7 +440,10 @@ export function createEmail(
     const subject = thread
       ? `Re: ${thread.subject || APP_NAME}`
       : firstLine(plain) || APP_NAME;
-    const sent = await smtpOf(smtp)
+    const transport = gmailHttps
+      ? createTransport({ streamTransport: true, buffer: true })
+      : smtpOf(smtp);
+    const sent = await transport
       .sendMail({
         from: { name: APP_NAME, address },
         to: chat,
@@ -456,6 +463,11 @@ export function createEmail(
         })),
       })
       .catch(refusedBy(smtp));
+    if (gmailHttps) {
+      if (!Buffer.isBuffer(sent.message))
+        throw new Error("Gmail mail could not be prepared for HTTPS delivery.");
+      await sendGmail(sent.message);
+    }
     const id = sent.messageId;
     threads.set(chat, {
       subject: thread?.subject ?? bareSubject(subject),
@@ -477,8 +489,9 @@ export function createEmail(
       signal.addEventListener("abort", shut, { once: true });
       try {
         await client.connect().catch(refusedBy(imap));
-        // Sending is checked too, so a password one server takes and the other refuses is found now
-        await smtpOf(smtp).verify().catch(refusedBy(smtp));
+        // Hosted Gmail can read over IMAP before HTTPS sending is authorized.
+        // A send then reports the missing Google connection, while the inbox stays live.
+        if (!gmailHttps) await smtpOf(smtp).verify().catch(refusedBy(smtp));
         on.ready(address, `mailto:${address}`, mailbox);
         const box = await client.mailboxOpen("INBOX", { readOnly: true });
         let seen = await readSeen(String(box.uidValidity), box.uidNext);

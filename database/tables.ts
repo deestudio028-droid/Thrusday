@@ -548,6 +548,65 @@ export const routineTable = sqliteTable(
   (t) => [index("idx_routine_due").on(t.enabled, t.nextRunAt)],
 );
 
+/** A time-specific notice, distinct from a bot routine whose work may finish later. */
+export const reminderTable = sqliteTable(
+  "reminder",
+  {
+    id: text("id").primaryKey(),
+    label: text("label").notNull(),
+    words: text("words").notNull(),
+    dueAt: int("due_at", { mode: "timestamp" }).notNull(),
+    timeZone: text("time_zone").notNull(),
+    createdAt: int("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    cancelledAt: int("cancelled_at", { mode: "timestamp" }),
+  },
+  (t) => [index("idx_reminder_due").on(t.dueAt, t.cancelledAt)],
+);
+
+/** One provider attempt per occurrence/channel; an uncertain attempt is never replayed. */
+export const reminderDeliveryTable = sqliteTable(
+  "reminder_delivery",
+  {
+    reminderId: text("reminder_id")
+      .notNull()
+      .references(() => reminderTable.id),
+    channel: text("channel", { enum: ["email", "telegram", "call"] }).notNull(),
+    status: text("status", {
+      enum: [
+        "ready",
+        "claimed",
+        "dispatching",
+        "accepted",
+        "unknown",
+        "unavailable",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("ready"),
+    startedAt: int("started_at", { mode: "timestamp" }),
+    finishedAt: int("finished_at", { mode: "timestamp" }),
+    detail: text("detail"),
+    providerId: text("provider_id"),
+    providerStatus: text("provider_status"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.reminderId, t.channel] }),
+    index("idx_reminder_delivery_status").on(t.status),
+  ],
+);
+
+/** One explicitly paired PC Chrome extension. Only a digest of its random key is kept. */
+export const pcBrowserDeviceTable = sqliteTable("pc_browser_device", {
+  id: text("id").primaryKey(),
+  keyHash: text("key_hash").notNull(),
+  createdAt: int("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 /** Settings written from the UI, mostly API keys. Env vars still win on read. */
 export const configTable = sqliteTable("config", {
   /** Same name as the env var (config.const). */

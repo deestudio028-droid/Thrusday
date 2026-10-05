@@ -656,7 +656,10 @@ export function useThursday(
       void revalidateAll();
     },
     threads: () => void revalidate(queryKey.threads),
-    routines: () => void revalidate(queryKey.routines),
+    routines: () => {
+      void revalidate(queryKey.routines);
+      void revalidate(queryKey.reminders);
+    },
     memory: () => void revalidate(queryKey.memory),
     mcp: () => {
       void revalidate(queryKey.mcp);

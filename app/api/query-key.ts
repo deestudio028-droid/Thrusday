@@ -20,6 +20,8 @@ export const decodePagePath = (segments: string[]) =>
   segments.map(decodeURIComponent).join("/");
 
 export const queryKey = {
+  /** Mailbox monitor state without message content or credentials. */
+  mailMonitor: "/api/mail-monitor",
   /** MemoryNote[] first page: pinned first, then by warmth */
   memory: "/api/memory",
   /** Next page; `offset` is the count received so far */
@@ -67,6 +69,8 @@ export const queryKey = {
 
   /** Routine[] in the order they were made, each with its latest runs (Settings > Routines) */
   routines: "/api/routine",
+  /** Reminder[] with independent email, Telegram and call delivery outcomes. */
+  reminders: "/api/reminder",
 
   /**
    * Inbox: Thread[] newest first, everything running or asking plus the most

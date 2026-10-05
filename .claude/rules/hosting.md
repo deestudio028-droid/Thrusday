@@ -22,7 +22,8 @@ The hosted app listens privately. Only the access gateway listens on the public 
 - `Dockerfile` — builds the Linux app, tools and browser without putting data in the image.
 - `.railway/railway.ts` — source, service settings and durable volume.
 - `scripts/hosting-access.test.mjs` — access, CSRF, header and streaming boundary checks.
-- `guide/hosting.md` — what changes for a person using a hosted instance.
+- `features/reach/gmail.ts` — hosted Gmail HTTPS sending when this plan blocks SMTP.
+- `guide/hosting.md` — what changes for a person using a hosted instance; public consent information at `/about`, `/privacy` and `/terms`.
 
 ## How it fits
 

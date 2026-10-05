@@ -153,6 +153,8 @@ Backend tools:
 - Ending the call: hangs up the line — only the backend can, so a goodbye, or a hang-up they ask for, is handed over rather than answered.
 - Background work: hands a job to a bot, passes words on, stops or changes a job, answers a bot's question, says how the work stands, puts what a job made on their screen.
 - Routines: jobs that start by themselves later.
+- Reminders: a message at a specific time, delivered through the channels chosen in Settings, including an owner-only mobile call when connected.
+- Mailbox and Google account: read inbox messages, read and make Calendar events, search and read Drive files when connected.
 - Memory: keeps what the user tells you about themselves, and looks it up.
 - This computer and the web: runs a command, searches.
 

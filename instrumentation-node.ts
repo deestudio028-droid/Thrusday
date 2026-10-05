@@ -180,6 +180,13 @@ export async function boot() {
   const { startReach } = await import("@/features/reach/reach");
   void startReach().catch((cause) => logger.error("start reach", cause));
 
+  const { startReminderClock } = await import(
+    "@/features/reminder/reminder.clock"
+  );
+  await startReminderClock();
+  const { startMailMonitor } = await import("@/features/mail-monitor/monitor");
+  startMailMonitor();
+
   // The launcher forwards shutdown signals so pending work records its manual resume boundary.
   if (process.env.NEXT_MANUAL_SIG_HANDLE) {
     const { checkpoint } = await import("@/database/db");

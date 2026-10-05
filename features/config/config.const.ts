@@ -14,10 +14,21 @@ import {
 import {
   DISCORD_TOKEN_KEY,
   EMAIL_PASSWORD_KEY,
+  GMAIL_CLIENT_ID_KEY,
+  GMAIL_CLIENT_SECRET_KEY,
+  GMAIL_REFRESH_TOKEN_KEY,
   SLACK_APP_TOKEN_KEY,
   SLACK_BOT_TOKEN_KEY,
   TELEGRAM_TOKEN_KEY,
 } from "@/features/reach/reach.schema";
+import {
+  CALL_MONTHLY_CAP_KEY,
+  CALL_OWNER_NUMBER_KEY,
+  TWILIO_ACCOUNT_SID_KEY,
+  TWILIO_AUTH_TOKEN_KEY,
+  TWILIO_CALLER_NUMBER_KEY,
+  TWILIO_VOICE_PIN_KEY,
+} from "@/features/reminder/reminder.schema";
 
 /**
  * Every config key the app reads, derived from the provider records. Values
@@ -297,6 +308,72 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
         label: "Email · app password",
         hint: "the app password her mailbox's service made for Thursday — saved with her address in Settings › Phone",
       },
+      {
+        key: GMAIL_CLIENT_ID_KEY,
+        label: "Gmail · OAuth client ID",
+        hint: "Google Cloud web client for this hosted Thursday address",
+      },
+      {
+        key: GMAIL_CLIENT_SECRET_KEY,
+        label: "Gmail · OAuth client secret",
+        hint: "the matching Google Cloud client secret; kept sealed on this server",
+      },
+      {
+        key: CALL_OWNER_NUMBER_KEY,
+        label: "Calls · your mobile number",
+        hint: "your own E.164 recipient mobile number, verified for voice in Twilio",
+      },
+      {
+        key: TWILIO_ACCOUNT_SID_KEY,
+        label: "Calls · Twilio Account SID",
+        hint: "Account SID from your Twilio Console",
+        site: "twilio.com",
+      },
+      {
+        key: TWILIO_AUTH_TOKEN_KEY,
+        label: "Calls · new Twilio Auth Token",
+        hint: "rotate any token shared in chat and enter the replacement here only",
+        site: "twilio.com",
+      },
+      {
+        key: TWILIO_CALLER_NUMBER_KEY,
+        label: "Calls · your Twilio number",
+        hint: "E.164 voice-capable caller number already on your Twilio account",
+      },
+      {
+        key: TWILIO_VOICE_PIN_KEY,
+        label: "Calls · private keypad PIN",
+        hint: "at least six digits; required after calling Thursday from your own verified mobile",
+      },
+      {
+        key: CALL_MONTHLY_CAP_KEY,
+        label: "Calls · 31-day safety cap",
+        hint: "off until selected; count provider attempts including uncertain ones",
+        choices: [
+          { value: "0", label: "Off", needs: "" },
+          { value: "5", label: "5 calls", needs: "" },
+          { value: "15", label: "15 calls", needs: "" },
+          { value: "30", label: "30 calls", needs: "" },
+        ],
+      },
+      {
+        key: "MAIL_MONITOR_ENABLED",
+        label: "Inbox · important mail alerts",
+        hint: "Read new inbox mail while Thursday runs; call and Telegram only for important messages. Existing mail is not alerted on first enable.",
+        choices: [
+          { value: "off", label: "Off", needs: "" },
+          { value: "on", label: "On", needs: "" },
+        ],
+      },
+      {
+        key: "REMINDER_CHANNELS",
+        label: "Reminders · delivery channels",
+        hint: "Call only, or email, Telegram and call when connected",
+        choices: [
+          { value: "all", label: "Email, Telegram and call", needs: "" },
+          { value: "call", label: "Call only", needs: "" },
+        ],
+      },
     ],
   },
   {
@@ -342,6 +419,7 @@ export const CONFIG_CHOICES: Record<string, ConfigChoice[]> =
  * the ChatGPT sign-in. Sealed before it is written (config.query), and never served.
  */
 export function isSecretKey(key: string): boolean {
+  if (key === GMAIL_REFRESH_TOKEN_KEY) return true;
   const entry = CONFIG_ENTRIES[key];
   return Boolean(entry && !entry.choices);
 }

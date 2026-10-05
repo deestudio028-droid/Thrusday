@@ -2,6 +2,7 @@
 
 import * as z from "zod";
 import { serverAction } from "@/lib/protocol/server-action";
+import { beginGmailAuthorization, disconnectGmail } from "./gmail";
 import { removeMailbox, saveMailbox } from "./mailbox";
 import { allowReach, declineReach, forgetReach, nameReach } from "./reach";
 import { NAMED_CHANNELS, REACH_CHANNELS } from "./reach.schema";
@@ -55,3 +56,11 @@ export const saveMailboxAction = serverAction(async (mailbox: unknown) =>
 export const removeMailboxAction = serverAction(async () => {
   await removeMailbox();
 });
+
+export const connectGmailAction = serverAction(async () =>
+  beginGmailAuthorization(),
+);
+
+export const disconnectGmailAction = serverAction(async () =>
+  disconnectGmail(),
+);

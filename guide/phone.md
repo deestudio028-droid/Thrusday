@@ -87,6 +87,14 @@ longer do, so they cannot be her mailbox.
    an encrypted connection from the start; any other port must offer one (STARTTLS), or nothing is
    sent. Once in, the step shows the address and servers, never the password; **Change** replaces
    them, and **Remove** stops Email (the mailbox itself is not touched).
+   If Thursday runs on a host that blocks SMTP and her mailbox is Gmail, she can still read
+   incoming mail over IMAP. To send, make a Google Cloud web OAuth client with the hosted
+   HTTPS address plus `/api/reach/gmail/callback` as its exact redirect URI. Add its client ID
+   and secret in Settings › API keys, then press **Connect Google** here and approve the same
+   account as her saved mailbox. The account must grant Gmail send and account-email access;
+   the app password does not grant Gmail API access. **Disconnect Gmail** removes Thursday's
+   local authorization. If the Google app is left in External Testing, its refresh token can
+   expire quickly and sending will ask you to reconnect. This does not affect incoming IMAP.
 3. Type your own address, the one you will write to her from, and press **Save**. Only mail from it
    reaches her. It cannot be her own address.
 4. From that address, write anything to hers: **Write to …** opens your mail app, and **Copy her
@@ -179,6 +187,40 @@ Work handed over from the phone keeps running whether or not the app is open in 
 as the app is running on the computer. A computer that is off or asleep does nothing until it is
 back.
 
+## One-time reminders
+
+Choose **Settings › API keys › Phone › Reminders · delivery channels** to receive calls only,
+or email, Telegram and calls. Calls always go to the configured owner mobile and share the
+rolling 31-day safety cap with important-mail alerts. There is no general-purpose outgoing
+call tool: scheduled notifications are the automatic dialling path.
+
+## Important inbox alerts
+
+Enable **Settings › API keys › Phone › Inbox · important mail alerts** after connecting the
+mailbox, a text model, Telegram and the owner call provider. Thursday checks the configured
+INBOX every minute while the server is running. The first check starts from the current end
+of the inbox, so old messages do not trigger calls. A model assesses each new message for
+significant, timely personal action; ordinary updates and uncertain importance do not call.
+Mail is untrusted content and cannot instruct the monitor to perform actions.
+
+Important messages queue an owner Telegram summary and phone call independently. The durable
+message ID prevents duplicate alerts after restart. The call cap can prevent a phone alert
+while Telegram still delivers. Errors are shown under **Settings › Phone**, and failed
+classification does not advance the message cursor. Large messages are assessed from sender
+and subject only. No messages are marked read, deleted or moved. `gmail_inbox` lets Thursday
+search and read the same configured inbox on request.
+
+A hosted server keeps checking when your PC is off. It still needs working mailbox and model
+credentials. Google OAuth connections in external Testing mode expire after seven days for
+these scopes; publish the OAuth application appropriately or reconnect to renew Google API
+access. Inbox monitoring uses the mailbox app password independently of that OAuth grant.
+
+Ask Thursday to remind you at a specific date and time, or create one in **Settings › Routines › One-time reminders**. Each reminder attempts a separate email, Telegram message and call to your own mobile. Connect email and Telegram in **Settings › Phone** and allow your own address or account there. For calls, save your verified E.164 mobile number, Twilio Account SID, a newly rotated Auth Token, your voice-capable Twilio caller number, and a 31-day safety cap in **Settings › API keys › Phone**. Calls are off when the cap is zero. The token is sealed on the server and never shown again. Trial eligibility, geographic permissions, remaining minutes and actual billing depend on the Twilio account; Thursday does not buy a number, upgrade the account or add funds.
+
+To call Thursday, set an additional private six-to-ten-digit keypad PIN there. In Twilio Console, set your Twilio number's incoming Voice webhook to the hosted site's `/api/twilio/voice/start` using **POST**. Only the verified owner number you saved can enter; a valid Twilio signature and your keypad PIN are checked before speech reaches Thursday. Trial calls use turn-taking with speech recognition and text-to-speech, up to two turns. They do not stream continuous audio. Calling a US number from another country may incur your carrier's international charges.
+
+The reminders list shows each channel as ready, accepted, unavailable, unknown or cancelled. Accepted means its provider accepted the request; it does not prove the message arrived or that a call was answered. An unknown send is never automatically repeated, because it might already have reached you. If the server was down at the due minute, it attempts a reminder after restart only within 30 minutes; later it records unavailable. Cancelling stops pending channels, but an already submitted provider request may still arrive.
+
 ## When it does not answer
 
 - **A token turned away** (wrong, revoked or reset, or on Slack a missing permission): the line says
@@ -209,3 +251,9 @@ back.
   told so once a conversation, with when the plan resets. With no key, the chat says the limit and
   that an OpenAI key in **Settings › API keys** would let her answer.
 - **No key, or a refused one**, is said in the chat in the provider's own words (`trouble.md`).
+
+An owner callback can use the same PIN-gated conversation webhook when Thursday places the call. It accepts only a signed Twilio API call from her configured caller number to the saved owner mobile. Reminder notifications continue to read their message and hang up; conversational callbacks retain the trial's two-turn and duration limits.
+
+If speech recognition produces no result, Thursday asks once for repetition instead of silently ending the call. Speak after the prompt. Short pauses within a sentence are retained; repeated missing speech ends the bounded trial conversation with an explanation.
+
+Phone conversation answers use brief spoken sentences instead of screen formatting. Decorative emoji characters are removed before text-to-speech. The response webhook waits briefly for an already-running answer instead of always adding a long fixed pause; provider and model latency still apply.

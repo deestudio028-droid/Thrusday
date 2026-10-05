@@ -93,7 +93,7 @@ const KIND_MARKS: Record<MediaKind, LucideIcon> = {
  * tap, search), and what runs on them. Phone is its own screen, below.
  */
 const SCREENS = {
-  keys: ["voice", "easy", "text", "search"],
+  keys: ["voice", "easy", "text", "search", "phone"],
   models: ["bots", "studio"],
 } as const satisfies Record<string, readonly ConfigGroup["id"][]>;
 
@@ -200,7 +200,17 @@ function ConfigScreen({ screen }: { screen: keyof typeof SCREENS }) {
           ) : (
             <SettingItems>
               {group.entries.map((entry) =>
-                entry.effortOf ? null : entry.choices ? (
+                entry.effortOf ? null : entry.choices &&
+                  !entry.text &&
+                  !entry.kind ? (
+                  <EnumChoiceRow
+                    key={entry.key}
+                    entry={entry}
+                    choices={entry.choices}
+                    value={valueOf(entry.key)}
+                    env={isEnv(entry.key)}
+                  />
+                ) : entry.choices ? (
                   <ChoiceRow
                     key={entry.key}
                     entry={entry}
@@ -224,6 +234,53 @@ function ConfigScreen({ screen }: { screen: keyof typeof SCREENS }) {
         </SettingGroup>
       ))}
     </SettingScreen>
+  );
+}
+
+/** A finite setting such as the owner call cap; its values are not model refs. */
+function EnumChoiceRow({
+  entry,
+  choices,
+  value,
+  env,
+}: {
+  entry: ConfigEntry;
+  choices: ConfigChoice[];
+  value?: string;
+  env: boolean;
+}) {
+  const [save] = useServerAction(setConfigAction, {
+    onOk: () => revalidate(queryKey.config),
+  });
+  return (
+    <div className="space-y-2 p-4">
+      <div className="text-sm font-medium">{entry.label}</div>
+      {entry.hint && (
+        <p className="text-xs text-muted-foreground">{entry.hint}</p>
+      )}
+      <div className="flex flex-wrap gap-2" aria-label={entry.label}>
+        {choices.map((choice) => (
+          <Button
+            key={choice.value}
+            type="button"
+            size="sm"
+            variant={
+              (value ?? choices[0]?.value) === choice.value
+                ? "default"
+                : "outline"
+            }
+            aria-pressed={(value ?? choices[0]?.value) === choice.value}
+            disabled={env}
+            onClick={() => save(entry.key, choice.value)}
+          >
+            {choice.label}
+          </Button>
+        ))}
+      </div>
+      {env && (
+        <p className="text-xs text-muted-foreground">{envWords(entry.label)}</p>
+      )}
+    </div>
   );
 }
 

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Thursday PC Chrome",
+  "version": "0.1.3",
+  "description": "Share one selected Chrome tab with your own Thursday assistant.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "worker.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Thursday PC Chrome"
+  }
+}

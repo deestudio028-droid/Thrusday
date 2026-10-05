@@ -621,6 +621,8 @@ export async function answerInWriting(input: {
   pictures?: string[];
   notes?: () => TurnNote[];
   signal?: AbortSignal;
+  /** A PSTN reply is spoken by a text-to-speech provider rather than displayed. */
+  spoken?: boolean;
 }): Promise<{
   text: string;
   did: string[];
@@ -632,6 +634,9 @@ export async function answerInWriting(input: {
     loadRun(callId, null, true),
     nextTurnSeq(callId),
   ]);
+  if (input.spoken)
+    run.system +=
+      "\nThis reply will be read aloud on a phone call. Use brief, natural spoken sentences. Do not use emojis, Markdown, tables, or decorative symbols. Give the useful answer first.";
   if (said !== null)
     await saveTurns(callId, [
       { id: crypto.randomUUID(), role: "user", text: said, seq },

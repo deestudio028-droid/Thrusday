@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { notify } from "@/components/ui/notify";
 import { ShinyText } from "@/components/ui/shiny-text";
 import { SiteIcon } from "@/components/ui/site-icon";
-import { KEY_MIN } from "@/config";
+import { KEY_MIN, MAIL_MONITOR } from "@/config";
 import {
   removeConfigAction,
   setConfigAction,
@@ -39,6 +39,8 @@ import { useServerAction } from "@/lib/protocol/use-server-action";
 import { revalidate, useServerRoute } from "@/lib/protocol/use-server-route";
 import { cn, WAITING_INK } from "@/lib/utils";
 import {
+  connectGmailAction,
+  disconnectGmailAction,
   forgetReachAction,
   nameReachAction,
   removeMailboxAction,
@@ -47,6 +49,8 @@ import {
 import {
   DISCORD_TOKEN_KEY,
   EMAIL_PASSWORD_KEY,
+  GMAIL_CLIENT_ID_KEY,
+  GMAIL_CLIENT_SECRET_KEY,
   REACH_CHANNELS,
   REACH_KEYS,
   REACH_LABEL,
@@ -340,6 +344,12 @@ function mailStates(facts: {
 export function ReachGuide() {
   const config = useServerRoute<ConfigStatus[]>(queryKey.config);
   const reach = useServerRoute<ReachStatus>(queryKey.reach);
+  const monitor = useServerRoute<{
+    enabled: boolean;
+    address: string | null;
+    checkedAt?: string;
+    problem?: string | null;
+  }>(queryKey.mailMonitor, { refreshInterval: MAIL_MONITOR.tickMs });
   useAppEvent({ reach: () => void revalidate(queryKey.reach) });
 
   const isSet = (key: string) => isConfigSet(config.data, key);
@@ -381,6 +391,17 @@ export function ReachGuide() {
           />
         ))}
       </SettingItems>
+      {monitor.data?.enabled && (
+        <SettingNote>
+          Important mail alerts · {monitor.data.address}
+          <br />
+          {monitor.data.problem
+            ? `Last check failed: ${monitor.data.problem}`
+            : monitor.data.checkedAt
+              ? `Last checked: ${new Date(monitor.data.checkedAt).toLocaleString()}. Important new messages trigger Telegram and a call within your call cap.`
+              : "Waiting for the first inbox check."}
+        </SettingNote>
+      )}
       <SettingNote>
         Only the one person you allow can write: direct messages in a chat app,
         and by email only mail from the address you name. Nobody else is ever
@@ -632,6 +653,59 @@ function MailWords({
   );
 }
 
+function GmailConnection() {
+  const { data } = useServerRoute<ConfigStatus[]>(queryKey.config);
+  const { data: reach } = useServerRoute<ReachStatus>(queryKey.reach);
+  const [connect, connecting] = useServerAction(connectGmailAction, {
+    onOk: (url) => window.location.assign(url),
+  });
+  const [disconnect, disconnecting] = useServerAction(disconnectGmailAction, {
+    onOk: () => void revalidate(queryKey.reach),
+  });
+  const ready = reach?.gmailAuthorized ?? false;
+  const credentials =
+    isConfigSet(data, GMAIL_CLIENT_ID_KEY) &&
+    isConfigSet(data, GMAIL_CLIENT_SECRET_KEY);
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 p-3 text-xs text-muted-foreground">
+      <p>
+        Connect Google Gmail, Calendar and Drive. Hosted Gmail sending uses
+        Google&apos;s HTTPS API because this hosting plan blocks SMTP. IMAP
+        still reads her inbox. Calendar access can view and edit events; Drive
+        access can read existing files. Add a Google Cloud web OAuth client in
+        Settings › API keys with this site&apos;s HTTPS origin followed by{" "}
+        <code>/api/reach/gmail/callback</code> as its redirect URI.
+      </p>
+      <p>
+        {ready
+          ? "Google Gmail, Calendar and Drive authorized."
+          : credentials
+            ? "Authorize this Google account for Gmail sending, Calendar and Drive."
+            : "Add the OAuth client ID and secret first."}
+      </p>
+      {ready ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disconnecting}
+          onClick={() => void disconnect()}
+        >
+          Disconnect Google
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!credentials || connecting}
+          onClick={() => void connect()}
+        >
+          Connect Google
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function Row({
   n,
   step,
@@ -746,19 +820,24 @@ function Doing({
   if (state === "later") return null;
   if (slot && "mailbox" in slot)
     return (
-      <MailboxField
-        mailbox={status?.mailbox ?? null}
-        refused={
-          status?.refused
-            ? (status.problem ?? "")
-            : lostPassword
-              ? lostWords(
-                  "The app password saved here",
-                  "Save her mailbox again.",
-                )
-              : null
-        }
-      />
+      <div className="space-y-3">
+        <MailboxField
+          mailbox={status?.mailbox ?? null}
+          refused={
+            status?.refused
+              ? (status.problem ?? "")
+              : lostPassword
+                ? lostWords(
+                    "The app password saved here",
+                    "Save her mailbox again.",
+                  )
+                : null
+          }
+        />
+        {status?.mailbox?.address.toLowerCase().endsWith("@gmail.com") && (
+          <GmailConnection />
+        )}
+      </div>
     );
   if (slot && "person" in slot)
     return <PersonField who={status?.allowed?.chat ?? null} />;

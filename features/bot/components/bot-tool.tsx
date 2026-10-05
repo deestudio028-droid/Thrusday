@@ -123,6 +123,11 @@ const TOOL_ICONS: Partial<Record<string, LucideIcon>> = {
   [TOOL_NAMES.sign_in_use]: KeyRound,
   [TOOL_NAMES.sign_in_keep]: KeyRound,
   [TOOL_NAMES.check_mail]: Mail,
+  [TOOL_NAMES.gmail_inbox]: Mail,
+  [TOOL_NAMES.google_calendar]: RoutineMark,
+  [TOOL_NAMES.google_drive]: FileText,
+  [TOOL_NAMES.reminder]: RoutineMark,
+  [TOOL_NAMES.pc_browser]: Globe,
   [TOOL_NAMES.end_call]: PhoneOff,
   [TOOL_NAMES.routine]: RoutineMark,
 };

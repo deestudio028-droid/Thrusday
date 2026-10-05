@@ -48,6 +48,7 @@ import {
   MCPStdioConfigSchema,
   type MCPTool,
 } from "@/features/connectors/mcp.schema";
+import { PcBrowserSetting } from "@/features/pc-browser/components/pc-browser-setting";
 import {
   SettingDialogContent,
   SettingError,
@@ -110,6 +111,7 @@ export function McpSetting() {
         onFilter={setFilter}
         onPreset={openMcpRegister}
       />
+      <PcBrowserSetting />
     </SettingScreen>
   );
 }

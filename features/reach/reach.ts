@@ -55,6 +55,7 @@ import {
   EMAIL_ADDRESS_KEY,
   EMAIL_IMAP_KEY,
   EMAIL_SMTP_KEY,
+  GMAIL_REFRESH_TOKEN_KEY,
   REACH_CHANNELS,
   REACH_KEYS,
   REACH_LABEL,
@@ -225,6 +226,7 @@ const writePerson = (name: ReachChannelName, person: Kept) =>
 
 export async function readReachStatus(): Promise<ReachStatus> {
   return {
+    gmailAuthorized: Boolean(await readConfig(GMAIL_REFRESH_TOKEN_KEY)),
     channels: await Promise.all(
       [...state.live.values()].map(async (live) => ({
         name: live.name,
@@ -241,6 +243,33 @@ export async function readReachStatus(): Promise<ReachStatus> {
       })),
     ),
   };
+}
+
+/** A scheduled notice goes only to the person already let into this channel. */
+export async function ownerNoticeReady(
+  name: "email" | "telegram",
+): Promise<boolean> {
+  const live = state.live.get(name);
+  // An incoming poll can fail while outgoing messages still work. The send itself
+  // checks the provider; a refused token or an unverified owner still blocks it.
+  if (!live?.bot || live.refused) return false;
+  const person = await readPerson(name);
+  return Boolean(person && person.bot === live.id);
+}
+
+export async function sendOwnerNotice(
+  name: "email" | "telegram",
+  words: string,
+): Promise<void> {
+  const live = state.live.get(name);
+  if (!live?.bot || live.refused)
+    publicError(`${REACH_LABEL[name]} is not connected for reminders.`);
+  const person = await readPerson(name);
+  if (!person || person.bot !== live.id)
+    publicError(
+      `Allow your own ${REACH_LABEL[name]} account in Settings › Phone first.`,
+    );
+  await live.channel.say(person.chat, { plain: words });
 }
 
 /** Email's mailbox as it was saved; none of it is secret (reach.schema). */

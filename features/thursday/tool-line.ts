@@ -16,6 +16,10 @@ const LINES: Record<string, string> = {
   [TOOL_NAMES.make_deck]: "Making the deck",
   [TOOL_NAMES.end_call]: "Ending the call",
   [TOOL_NAMES.routine]: "Checking your routines",
+  [TOOL_NAMES.reminder]: "Checking your reminders",
+  [TOOL_NAMES.google_calendar]: "Checking your calendar",
+  [TOOL_NAMES.gmail_inbox]: "Reading your inbox",
+  [TOOL_NAMES.google_drive]: "Checking your Drive",
 };
 
 /** When a routine being made starts, as the call's arguments say it: "once at 19:10", "every 6 hours". */
@@ -146,6 +150,11 @@ function fromArgs(
     }
     if (args.action === "change") return "Changing a routine";
     if (args.action === "delete") return "Deleting a routine";
+    return null;
+  }
+  if (name === TOOL_NAMES.reminder) {
+    if (args.action === "create") return "Scheduling your reminder";
+    if (args.action === "cancel") return "Cancelling your reminder";
     return null;
   }
   const label = said(args, "thread");

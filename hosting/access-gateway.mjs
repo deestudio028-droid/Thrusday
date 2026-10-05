@@ -249,6 +249,13 @@ function upstreamResponseHeaders(upstream, upgrade = false) {
   return headers;
 }
 
+// Static information exposes no deployment data and needs no assistant session.
+const PUBLIC_INFORMATION = {
+  "/about": `<h1>Thursday Assistant</h1><p>A private, self-hosted assistant for its owner. Thursday can answer questions, work with connected Gmail, Calendar and Drive, run requested reminders, and control a Chrome tab the owner explicitly shares.</p><p>Google access is connected by the owner through OAuth. Inbox monitoring reads new messages and sends owner notifications for important messages when enabled. Using the assistant requires the hosting password.</p><p><a href="/">Open private assistant</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>`,
+  "/privacy": `<h1>Thursday Assistant privacy information</h1><p>This assistant is self-hosted by its operator. Its workspace, conversations, reminders and settings are stored on the operator's server and persistent data volume. Saved provider credentials are encrypted with a key held on that same server; the operator and software running there can access them.</p><p>When connected by the owner, Google APIs provide email sending, Calendar event access and Drive file access. The configured mailbox can be searched and read using its mail credentials. Optional monitoring reads new inbox messages and sends bounded message content to the configured AI provider to assess importance. Important summaries are sent to the owner's configured Telegram account and phone-call provider. Calls and provider usage may incur charges under those providers' terms.</p><p>Requested assistant tasks send relevant instructions, conversation or file content to configured model providers. Chrome automation reads and acts in the single tab the owner explicitly shares. The extension can be paused or disconnected. Mail content is treated as untrusted information, not authorization to run actions.</p><p>The operator controls the data volume, backups and service accounts. To stop access, disable monitoring, disconnect connectors, revoke Google access in the Google account, and remove saved credentials in Settings. Removing a connector does not erase stored conversations, files or backups; the operator manages retention and deletion.</p><p>For questions about this deployment or data removal, contact the operator using the support address shown on its Google consent screen.</p><p><a href="/about">About</a> · <a href="/terms">Terms</a></p>`,
+  "/terms": `<h1>Thursday Assistant terms of use</h1><p>Thursday is open-source software distributed under the MIT license. The software is provided as is, without warranty, as described in that license. This private deployment is operated by its owner.</p><p>Connected services remain subject to their own terms, availability, account limits and charges. The operator is responsible for configuring accounts, recipient permissions and deployment access. Provider acceptance does not guarantee delivery or that a call was answered. The call cap limits assistant attempts and does not guarantee a provider's bill.</p><p><a href="/about">About</a> · <a href="/privacy">Privacy</a></p>`,
+};
+
 /** HTTPS terminates at Railway. This process is the only publicly exposed listener. */
 export function createGateway({ env = process.env } = {}) {
   const config = readConfiguration(env);
@@ -387,6 +394,15 @@ export function createGateway({ env = process.env } = {}) {
       );
     }
     if (!hostValid(req)) return reply(res, 421, "Unexpected host.");
+    if (SAFE_METHODS.has(req.method) && Object.hasOwn(PUBLIC_INFORMATION, path))
+      return reply(
+        res,
+        200,
+        req.method === "HEAD"
+          ? ""
+          : `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Thursday Assistant</title><style>body{font:16px system-ui;margin:40px auto;padding:0 24px;max-width:720px;line-height:1.6}a{color:inherit}</style></head><body><main>${PUBLIC_INFORMATION[path]}</main></body></html>`,
+        { "content-type": "text/html; charset=utf-8" },
+      );
     if (path === "/__auth/login") {
       if (req.method === "GET")
         return reply(res, 200, loginPage(), AUTH_PAGE_HEADERS);
@@ -428,7 +444,19 @@ export function createGateway({ env = process.env } = {}) {
         activePasswordChecks -= 1;
       }
     }
-    const denied = authenticate(req);
+    // The owner's Chrome extension has no gateway cookie. This one route checks a
+    // separate random bearer key inside Thursday; every other path keeps the password gate.
+    const twilioVoice =
+      path.startsWith("/api/twilio/voice/") &&
+      req.method === "POST" &&
+      /^[A-Za-z0-9+/=]+$/.test(String(req.headers["x-twilio-signature"] ?? ""));
+    const pcBridge =
+      path === "/api/pc-browser/bridge" &&
+      /^Bearer [A-Za-z0-9_-]{43}$/.test(
+        String(req.headers.authorization ?? ""),
+      ) &&
+      ["GET", "POST"].includes(req.method);
+    const denied = pcBridge || twilioVoice ? null : authenticate(req);
     if (denied) {
       if (
         denied === 401 &&

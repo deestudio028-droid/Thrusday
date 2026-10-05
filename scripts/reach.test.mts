@@ -19,6 +19,7 @@ const inbox: unknown[] = [];
 let updateId = 1;
 /** Telegram turns the token away, as it does one revoked in BotFather. */
 let turnedAway = false;
+let pollConflict = false;
 /** A message sent waits here before Telegram answers it, as a slow network holds it. */
 let sending: Promise<void> | null = null;
 const realFetch = globalThis.fetch;
@@ -60,6 +61,15 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
           username: "test_bot",
         });
   if (method === "getUpdates") {
+    if (pollConflict)
+      return Response.json(
+        {
+          ok: false,
+          error_code: 409,
+          description: "Another incoming poll is active",
+        },
+        { status: 409 },
+      );
     // A short wait in place of the long poll, so the loop neither spins nor holds the test
     await new Promise((resolve) => setTimeout(resolve, 5));
     return answer(inbox.splice(0));
@@ -154,6 +164,7 @@ mock.module("../features/thursday/thursday.text.ts", {
     },
   },
 });
+
 // Drawing a page takes a browser; two pictures stand in for what it draws, and a PDF for
 // what a page made to be read prints as (a report does; a board is seen, not read)
 mock.module("../features/reach/pictures.ts", {
@@ -1162,5 +1173,26 @@ test("a token written or removed from anywhere tells every open tab, and who is 
     assert.equal(told.length, 2, "a row Settings does not list stays quiet");
   } finally {
     stop();
+  }
+});
+
+test("an incoming poll conflict does not block an authorized outgoing reminder", async () => {
+  pollConflict = true;
+  try {
+    let status;
+    for (let tries = 0; tries < 200; tries++) {
+      [status] = (await reach.readReachStatus()).channels;
+      if (status.problem) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(status?.problem, "incoming poll failed");
+    assert.equal(await reach.ownerNoticeReady("telegram"), true);
+    const before = sent.length;
+    await reach.sendOwnerNotice("telegram", "Scheduled delivery test");
+    assert.equal(sent.length, before + 1);
+    assert.equal(sent.at(-1)?.body.chat_id, "7");
+  } finally {
+    pollConflict = false;
+    await reach.startReach("telegram");
   }
 });
