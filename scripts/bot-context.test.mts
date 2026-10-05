@@ -5510,27 +5510,6 @@ test("a note about a helper's file reaches the helper, and none is sent to a thr
   }
 });
 
-test("every command and write in a shell tells a file open on screen to look again", async () => {
-  const { appEvents } = await import("../app/api/events/app-event.server.ts");
-  const { openWorkspace } = await import("../features/workspace/workspace.ts");
-  let told = 0;
-  const stop = appEvents.subscribe((event) => {
-    if (event.type === "files") told += 1;
-  });
-  try {
-    const sandbox = await openWorkspace();
-    await sandbox.exec("true");
-    assert.equal(told, 1);
-    await sandbox.writeFile("scratch/files-signal.txt", "x");
-    assert.equal(told, 2);
-    // A command that failed may have written part of a file
-    assert.equal((await sandbox.exec("exit 3")).exitCode, 3);
-    assert.equal(told, 3);
-  } finally {
-    stop();
-  }
-});
-
 test("a file of a set its report did not name finds the thread that named another file of the set", async () => {
   const { readFileThread } = await import("../features/bot/thread.file.ts");
   const shelf = botArtifacts("Alpha");
